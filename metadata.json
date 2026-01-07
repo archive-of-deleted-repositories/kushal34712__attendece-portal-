@@ -1,5 +1,5 @@
 {
-  "name": "NMIMS Attendance Tracker",
+  "name": "Attendence Portal",
   "description": "A comprehensive attendance tracking system specifically designed for SVKM NMIMS BBA Sem-II students to monitor subject-wise attendance percentages and stay on top of their schedule.",
   "requestFramePermissions": []
 }
