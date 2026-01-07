@@ -7,7 +7,7 @@ import {
 import { 
   Calendar, CheckCircle, XCircle, Clock, BookOpen, BarChart2, 
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
-  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, Upload, FileUp, Loader2
+  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, Upload, FileUp, Loader2, TrendingUp, Zap, Target
 } from 'lucide-react';
 import { format, addDays, subDays, startOfToday, parseISO } from 'date-fns';
 import { GoogleGenAI } from "@google/genai";
@@ -57,7 +57,7 @@ const App: React.FC = () => {
   
   // Modals
   const [showStatusModal, setShowStatusModal] = useState<{lectureId: string, subject: string} | null>(null);
-  const [showSubModal, setShowSubModal] = useState<{lectureId: string, originalSubject: string} | null>(null);
+  const [showSubModal, setShowStatusSubModal] = useState<{lectureId: string, originalSubject: string} | null>(null);
   const [showExtraModal, setShowExtraModal] = useState(false);
   const [showAddLectureModal, setShowAddLectureModal] = useState<DayOfWeek | null>(null);
   
@@ -110,7 +110,7 @@ const App: React.FC = () => {
     setIsSyncing(false);
     
     setShowStatusModal(null);
-    setShowSubModal(null);
+    setShowStatusSubModal(null);
     setShowExtraModal(false);
   };
 
@@ -246,6 +246,17 @@ const App: React.FC = () => {
     return { ...student, stats: st };
   }, [selectedAdminStudent, studentsList, subjectsList]);
 
+  const todayStr = format(selectedDate, 'yyyy-MM-dd');
+  const selectedDayName = format(selectedDate, 'EEEE') as DayOfWeek;
+
+  // Dynamic Greeting
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  }, []);
+
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6">
@@ -263,9 +274,6 @@ const App: React.FC = () => {
       </div>
     );
   }
-
-  const todayStr = format(selectedDate, 'yyyy-MM-dd');
-  const selectedDayName = format(selectedDate, 'EEEE') as DayOfWeek;
 
   return (
     <div className="min-h-screen bg-[#050505] text-slate-100 flex flex-col md:flex-row max-w-[1920px] mx-auto overflow-hidden">
@@ -311,62 +319,121 @@ const App: React.FC = () => {
 
         <div className="p-5 sm:p-12 lg:p-20 space-y-12">
           {activeTab === 'dashboard' && (
-            <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
-              <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                <div>
-                  <h1 className="text-5xl sm:text-7xl font-black text-white tracking-tighter">Terminal 01</h1>
-                  <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[11px] sm:text-xs mt-2">Personal Attendance Matrix</p>
+            <div className="space-y-14 animate-in fade-in slide-in-from-bottom-8 duration-700">
+              {/* Modern Hero Section */}
+              <header className="relative overflow-hidden p-10 sm:p-16 rounded-[64px] bg-indigo-600 shadow-2xl flex flex-col lg:flex-row items-center justify-between gap-12 group">
+                <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl -mr-48 -mt-48 group-hover:scale-125 transition-transform duration-1000" />
+                <div className="absolute bottom-0 left-0 w-64 h-64 bg-black/10 rounded-full blur-3xl -ml-32 -mb-32 group-hover:scale-125 transition-transform duration-1000" />
+                
+                <div className="relative z-10 text-center lg:text-left">
+                  <span className="bg-white/20 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.3em] text-white/90 backdrop-blur-md mb-6 inline-block">System Operational</span>
+                  <h1 className="text-4xl sm:text-7xl font-black text-white tracking-tighter leading-tight">
+                    {greeting}, <br className="hidden sm:block" /> {currentUser.name.split(' ')[0]}
+                  </h1>
+                  <p className="text-indigo-100/70 font-bold text-lg mt-4 max-w-md">Your attendance matrix is currently synchronization at {stats.overall}% efficiency.</p>
+                  
+                  <div className="flex flex-wrap gap-4 mt-10 justify-center lg:justify-start">
+                    <button onClick={() => setActiveTab('schedule')} className="px-10 py-5 bg-white text-indigo-600 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl hover:scale-105 active:scale-95 transition-all">View Schedule</button>
+                    <button onClick={() => setActiveTab('history')} className="px-10 py-5 bg-indigo-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-indigo-800 transition-all">Session Logs</button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="bg-slate-900/40 p-6 rounded-[32px] border border-white/5 flex items-center gap-6">
-                    <div>
-                      <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Aggregate</p>
-                      <h3 className={`text-3xl font-black ${stats.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{stats.overall}%</h3>
-                    </div>
-                    <div className="w-12 h-12 bg-black/40 rounded-2xl flex items-center justify-center">
-                      <ShieldCheck className={`w-6 h-6 ${stats.overall >= 75 ? 'text-emerald-500' : 'text-rose-500'}`} />
+
+                <div className="relative z-10 flex flex-col items-center">
+                  <div className="w-56 h-56 sm:w-72 sm:h-72 relative">
+                    <div className="absolute inset-0 border-[12px] border-white/10 rounded-full" />
+                    <div className="absolute inset-0 border-[12px] border-white rounded-full transition-all duration-1000" style={{ clipPath: `inset(0 0 ${100 - stats.overall}% 0)` }} />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-6xl sm:text-8xl font-black text-white tracking-tighter">{stats.overall}%</span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-indigo-100/60 mt-2">Aggregate</span>
                     </div>
                   </div>
                 </div>
               </header>
 
-              {/* RESTORED SUBJECT LIST ON HOME SCREEN */}
-              <section className="space-y-8">
+              {/* Status Row Widgets */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatusWidget icon={<Zap className="text-yellow-400" />} label="Total Present" value={stats.totalP} suffix={`/ ${stats.totalC}`} />
+                <StatusWidget icon={<TrendingUp className="text-emerald-400" />} label="Avg. Efficiency" value={`${stats.overall}%`} />
+                <StatusWidget icon={<Target className="text-indigo-400" />} label="Target Goal" value="75%" />
+                <StatusWidget icon={<History className="text-purple-400" />} label="Total Logs" value={records.length} />
+              </div>
+
+              {/* REDESIGNED SUBJECT CARDS GRID */}
+              <section className="space-y-10">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><Database className="w-8 h-8 text-indigo-500" /> Data Nodes</h2>
+                  <h2 className="text-3xl font-black text-white flex items-center gap-6"><BookOpen className="w-10 h-10 text-indigo-500" /> Subject Nodes</h2>
+                  <div className="hidden sm:flex items-center gap-3">
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500" /><span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Stable</span></div>
+                    <div className="flex items-center gap-2 ml-4"><div className="w-3 h-3 rounded-full bg-rose-500" /><span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Critical</span></div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                   {stats.summary.map(sub => (
-                    <div key={sub.name} className="bg-slate-900/30 p-8 rounded-[40px] border border-white/5 group hover:border-indigo-500/30 transition-all flex flex-col justify-between h-56 shadow-2xl relative overflow-hidden">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-indigo-600 opacity-20" />
-                      <div>
-                        <div className="flex justify-between items-start mb-4">
-                          <h4 className="font-black text-white text-xl leading-tight truncate pr-4">{sub.name}</h4>
-                          <span className={`text-2xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</span>
+                    <div key={sub.name} className="group relative bg-[#0d0d0d] rounded-[48px] border border-white/5 hover:border-indigo-500/20 transition-all duration-500 overflow-hidden shadow-2xl flex flex-col p-10 hover:translate-y-[-8px]">
+                      {/* Subject Percentage Header */}
+                      <div className="flex justify-between items-start mb-8">
+                        <div className="min-w-0 pr-6">
+                          <h4 className="font-black text-white text-2xl leading-tight truncate group-hover:text-indigo-400 transition-colors">{sub.name}</h4>
+                          <p className="text-[11px] text-slate-600 font-black uppercase tracking-widest mt-2">ID: {sub.name.substring(0,3).toUpperCase()}-NODE</p>
                         </div>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Ratio: {sub.present} / {sub.total}</p>
-                      </div>
-                      <div className="space-y-4">
-                        <div className="h-2 bg-black/40 rounded-full overflow-hidden">
-                          <div className={`h-full transition-all duration-1000 ${sub.percentage >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(sub.percentage, 100)}%` }} />
+                        <div className={`text-5xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {sub.percentage}%
                         </div>
-                        <p className="text-[9px] font-black uppercase text-slate-600 tracking-widest">{sub.strategy}</p>
                       </div>
+
+                      {/* Main Progress Indicator */}
+                      <div className="relative h-4 bg-black/40 rounded-full overflow-hidden mb-10 shadow-inner">
+                        <div 
+                          className={`h-full transition-all duration-1000 ${sub.percentage >= 75 ? 'bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 'bg-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.3)]'}`} 
+                          style={{ width: `${Math.min(sub.percentage, 100)}%` }} 
+                        />
+                        <div className="absolute top-0 left-[75%] w-0.5 h-full bg-white/20 z-10" />
+                      </div>
+
+                      {/* Info & Strategy */}
+                      <div className="flex justify-between items-center mt-auto bg-black/30 p-6 rounded-3xl border border-white/5 group-hover:bg-indigo-600/5 transition-all">
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Sessions</p>
+                          <p className="text-xl font-black text-white">{sub.present} / {sub.total}</p>
+                        </div>
+                        <div className="text-right space-y-1">
+                          <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Strategic Intel</p>
+                          <p className={`font-bold text-xs ${sub.percentage < 75 ? 'text-rose-400' : 'text-emerald-400'}`}>{sub.strategy}</p>
+                        </div>
+                      </div>
+                      
+                      {/* Hover Highlight Overlay */}
+                      <div className="absolute inset-0 bg-indigo-600 opacity-0 group-hover:opacity-[0.02] transition-opacity pointer-events-none" />
                     </div>
                   ))}
                 </div>
               </section>
 
-              <section className="space-y-8">
-                <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Statistical View</h2>
-                <div className="bg-slate-900/30 p-10 rounded-[56px] border border-white/5 shadow-2xl overflow-hidden h-96 relative">
+              {/* Stats Visualizer */}
+              <section className="space-y-10">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-3xl font-black text-white flex items-center gap-6"><BarChart2 className="w-10 h-10 text-indigo-500" /> Matrix Analytics</h2>
+                  <button onClick={() => setActiveTab('subjects')} className="p-4 bg-slate-900/40 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:text-white transition-all flex items-center gap-3">Full Report <ChevronRight className="w-4 h-4" /></button>
+                </div>
+                <div className="bg-[#0d0d0d] p-10 sm:p-14 rounded-[64px] border border-white/5 shadow-2xl relative h-[500px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stats.summary}>
+                    <BarChart data={stats.summary} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
+                      <defs>
+                        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#6366f1" stopOpacity={0.8}/>
+                          <stop offset="100%" stopColor="#6366f1" stopOpacity={0.2}/>
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1a1a1a" />
-                      <XAxis dataKey="name" hide />
+                      <XAxis dataKey="name" stroke="#334155" fontSize={10} fontWeight="bold" tick={{ fill: '#475569' }} axisLine={false} tickLine={false} dy={20} />
                       <YAxis hide domain={[0, 100]} />
-                      <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#080808', borderRadius: '24px', border: 'none', fontSize: '11px', fontWeight: 'bold' }} />
-                      <Bar dataKey="percentage" fill="#6366f1" radius={[12, 12, 0, 0]} barSize={45} />
+                      <Tooltip 
+                        cursor={{ fill: '#ffffff05' }} 
+                        contentStyle={{ backgroundColor: '#080808', borderRadius: '32px', border: '1px solid rgba(255,255,255,0.05)', fontSize: '12px', fontWeight: 'bold', padding: '16px' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Bar dataKey="percentage" fill="url(#barGradient)" radius={[16, 16, 16, 16]} barSize={50} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -604,9 +671,7 @@ const App: React.FC = () => {
         {isAdmin && <MobileNavItem icon={<Database />} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />}
       </nav>
 
-      {/* --- ALL MODALS START HERE --- */}
-
-      {/* Status Log Modal */}
+      {/* Modals */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowStatusModal(null)} />
@@ -625,13 +690,12 @@ const App: React.FC = () => {
                 <StatusBtn icon={<Ban className="text-slate-400" />} label="Cancel" color="hover:bg-white/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'cancelled')} />
                 <StatusBtn icon={<Umbrella className="text-amber-500" />} label="Holiday" color="hover:bg-amber-500/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'holiday')} />
               </div>
-              <StatusBtn icon={<RefreshCcw className="text-indigo-500" />} label="Substitution" color="hover:bg-indigo-500/10 border-indigo-500/10" onClick={() => setShowSubModal({lectureId: showStatusModal.lectureId, originalSubject: showStatusModal.subject})} />
+              <StatusBtn icon={<RefreshCcw className="text-indigo-500" />} label="Substitution" color="hover:bg-indigo-500/10 border-indigo-500/10" onClick={() => setShowStatusSubModal({lectureId: showStatusModal.lectureId, originalSubject: showStatusModal.subject})} />
             </div>
           </div>
         </div>
       )}
 
-      {/* Admin Student Details Modal (FIXED) */}
       {selectedAdminStudent && selectedStudentDetails && (
         <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setSelectedAdminStudent(null)} />
@@ -662,7 +726,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Other Modals (Enroll, Extra, Sub, Comms) follow the same high-fidelity styling... */}
       {showAddStudentModal && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowAddStudentModal(false)} />
@@ -689,7 +752,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Extra Session Modal */}
       {showExtraModal && (
         <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowExtraModal(false)} />
@@ -713,14 +775,13 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Substitution Modal */}
       {showSubModal && (
         <div className="fixed inset-0 z-[270] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowSubModal(null)} />
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowStatusSubModal(null)} />
           <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[85vh] rounded-t-[64px] sm:rounded-[72px] border-t sm:border border-white/10 p-12 flex flex-col shadow-2xl">
             <div className="flex justify-between items-center mb-12">
               <h3 className="text-3xl font-black text-white tracking-tighter">Substitute With</h3>
-              <button onClick={() => setShowSubModal(null)} className="p-6 bg-white/5 rounded-[32px] text-slate-500"><X className="w-10 h-10" /></button>
+              <button onClick={() => setShowStatusSubModal(null)} className="p-6 bg-white/5 rounded-[32px] text-slate-500"><X className="w-10 h-10" /></button>
             </div>
             <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-12">
               {subjectsList.map(sub => (
@@ -737,7 +798,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Notification Center */}
       {showNotificationCenter && (
         <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setShowNotificationCenter(false)} />
@@ -766,7 +826,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Add Lecture Rule Modal */}
       {showAddLectureModal && (
         <div className="fixed inset-0 z-[350] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowAddLectureModal(null)} />
@@ -820,6 +879,19 @@ const StatusBtn: React.FC<{ icon: React.ReactNode; label: string; color: string;
     {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-10 h-10 sm:w-12 sm:h-12 shrink-0 transition-all group-hover:scale-110' })}
     {label}
   </button>
+);
+
+const StatusWidget: React.FC<{ icon: React.ReactNode; label: string; value: string | number; suffix?: string }> = ({ icon, label, value, suffix }) => (
+  <div className="bg-[#0d0d0d] p-8 rounded-[40px] border border-white/5 flex items-center gap-6 shadow-xl hover:border-indigo-500/20 transition-all">
+    <div className="w-16 h-16 bg-black/40 rounded-[24px] flex items-center justify-center shadow-inner">{icon}</div>
+    <div>
+      <p className="text-[9px] font-black uppercase text-slate-600 tracking-widest mb-1">{label}</p>
+      <div className="flex items-baseline gap-2">
+        <h4 className="text-2xl font-black text-white tracking-tighter">{value}</h4>
+        {suffix && <span className="text-[10px] font-bold text-slate-700">{suffix}</span>}
+      </div>
+    </div>
+  </div>
 );
 
 export default App;
