@@ -7,7 +7,7 @@ import {
 import { 
   Calendar, CheckCircle, XCircle, Clock, BookOpen, BarChart2, 
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
-  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone
+  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella
 } from 'lucide-react';
 import { format, addDays, subDays, startOfToday, parseISO, addMinutes } from 'date-fns';
 import { FULL_SCHEDULE, SUBJECTS, AUTHORIZED_STUDENTS, DEFAULT_PASSWORD, ADMIN_SAP_ID, DAYS } from './constants';
@@ -62,7 +62,6 @@ const App: React.FC = () => {
   
   // Core Data
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const isAdmin = currentUser?.sapId === ADMIN_SAP_ID;
 
   // Persistence Effects
@@ -87,6 +86,7 @@ const App: React.FC = () => {
     
     setIsSyncing(true);
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    // Using a stable ID for regular lectures and timestamp for extra ones
     const recordId = lectureId.startsWith('extra-') ? `extra-${Date.now()}` : `${dateStr}-${lectureId}`;
     
     const newRecord: AttendanceRecord = { 
@@ -105,11 +105,9 @@ const App: React.FC = () => {
       return updated;
     });
 
-    // Simulated latency for feedback
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 200));
     setIsSyncing(false);
     
-    // Close all relevant modals
     setShowStatusModal(null);
     setShowSubModal(null);
     setShowExtraModal(false);
@@ -126,7 +124,7 @@ const App: React.FC = () => {
       setCurrentUser(user);
       localStorage.setItem('nmims_session_user', JSON.stringify(user));
     } else {
-      alert('Invalid Credentials. Please try again.');
+      alert('Invalid Credentials.');
     }
   };
 
@@ -276,6 +274,7 @@ const App: React.FC = () => {
                 </button>
               </header>
 
+              {/* Aggregated Stats */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="bg-slate-900/30 p-8 sm:p-10 rounded-[40px] border border-white/5 flex items-center justify-between group hover:border-indigo-500/20 transition-all">
                   <div>
@@ -285,7 +284,7 @@ const App: React.FC = () => {
                   <div className="h-20 w-20 sm:h-28 sm:w-28">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={[{v: stats.totalP}, {v: stats.totalC-stats.totalP || 1}]} innerRadius={30} outerRadius={42} paddingAngle={4} dataKey="v" stroke="none">
+                        <Pie data={[{v: stats.totalP}, {v: Math.max(0.1, stats.totalC-stats.totalP)}]} innerRadius={30} outerRadius={42} paddingAngle={4} dataKey="v" stroke="none">
                           <Cell fill="#6366f1" />
                           <Cell fill="#1a1a1a" />
                         </Pie>
@@ -309,8 +308,27 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Subject Performance List on Home Screen */}
               <section className="space-y-8">
-                <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Statistical View</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><BookOpen className="w-8 h-8 text-indigo-500" /> Subject Metrics</h2>
+                  <button onClick={() => setActiveTab('subjects')} className="text-[10px] font-black uppercase text-indigo-400 tracking-widest hover:underline">View Strategy</button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {stats.summary.map(sub => (
+                    <div key={sub.name} className="bg-slate-900/20 p-6 rounded-[32px] border border-white/5 flex items-center justify-between group hover:bg-slate-900/40 transition-all">
+                      <div className="min-w-0 pr-4">
+                        <h4 className="font-black text-white text-lg tracking-tight truncate leading-tight">{sub.name}</h4>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Sessions: {sub.present}/{sub.total}</p>
+                      </div>
+                      <div className={`text-2xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="space-y-8">
+                <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Analytics Graph</h2>
                 <div className="bg-slate-900/30 p-6 sm:p-10 rounded-[56px] border border-white/5 shadow-2xl overflow-hidden">
                   <div className="h-64 sm:h-96 w-full relative">
                     <ResponsiveContainer width="100%" height="100%">
@@ -360,7 +378,7 @@ const App: React.FC = () => {
                         </div>
                         <button 
                           onClick={() => setShowStatusModal({lectureId: lecture.id, subject: lecture.subject})} 
-                          className={`w-full sm:w-auto px-14 py-6 rounded-[32px] font-black text-[11px] uppercase border tracking-widest transition-all pointer-events-auto active:scale-95 ${ record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-black/40 text-slate-500 border-white/10' }`}
+                          className={`w-full sm:w-auto px-14 py-6 rounded-[32px] font-black text-[11px] uppercase border tracking-widest transition-all pointer-events-auto active:scale-95 ${ record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : record?.status === 'cancelled' || record?.status === 'holiday' ? 'bg-slate-500/10 text-slate-500 border-slate-500/20' : 'bg-black/40 text-slate-500 border-white/10' }`}
                         >
                           {record?.status || 'Record Entry'}
                         </button>
@@ -419,7 +437,6 @@ const App: React.FC = () => {
             <div className="space-y-10 animate-in fade-in duration-700">
               <header className="flex flex-col sm:flex-row justify-between items-center bg-slate-900/30 p-8 rounded-[48px] border border-white/5 gap-8">
                 <div><h2 className="text-3xl font-black text-white tracking-tighter">Session Logs</h2><p className="text-[10px] text-slate-500 font-black uppercase mt-4 tracking-widest">Archive Management</p></div>
-                <button onClick={() => setShowImportModal(true)} className="w-full sm:w-auto px-10 py-5 bg-emerald-500 text-black rounded-3xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 shadow-2xl"><Sparkles className="w-5 h-5" /> Cloud Sync</button>
               </header>
               <div className="space-y-8">
                 {groupedHistory.length > 0 ? (
@@ -429,9 +446,11 @@ const App: React.FC = () => {
                       <div className="divide-y divide-white/5">
                         {dayRecords.map(r => (
                           <div key={r.id} className="px-10 py-8 flex items-center justify-between hover:bg-black/20 transition-all gap-4">
-                            <div className="min-w-0"><p className="text-white font-black text-2xl tracking-tight truncate">{r.actualSubjectName}</p></div>
+                            <div className="min-w-0 pr-4">
+                              <p className="text-white font-black text-2xl tracking-tight truncate">{r.actualSubjectName}</p>
+                            </div>
                             <div className="flex items-center gap-6 shrink-0">
-                              <span className={`px-5 py-2 rounded-xl text-[11px] font-black uppercase border ${r.status === 'present' ? 'text-emerald-400 border-emerald-500/20' : 'text-rose-400 border-rose-500/20'}`}>{r.status}</span>
+                              <span className={`px-5 py-2 rounded-xl text-[11px] font-black uppercase border ${r.status === 'present' ? 'text-emerald-400 border-emerald-500/20' : r.status === 'absent' ? 'text-rose-400 border-rose-500/20' : 'text-slate-500 border-white/10'}`}>{r.status}</span>
                               <button onClick={() => { if(confirm('Delete record?')) setRecords(prev => prev.filter(x => x.id !== r.id)); }} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all"><Trash2 className="w-5 h-5" /></button>
                             </div>
                           </div>
@@ -453,7 +472,7 @@ const App: React.FC = () => {
             <div className="space-y-12 animate-in fade-in duration-700">
               <header className="flex flex-col lg:flex-row justify-between items-center bg-indigo-600 p-10 sm:p-14 rounded-[56px] gap-10 shadow-2xl">
                 <div><h2 className="text-4xl sm:text-6xl font-black text-white tracking-tighter">Root Admin</h2><p className="text-indigo-100 text-[11px] font-black uppercase mt-4 tracking-widest">Master Node Logic</p></div>
-                <div className="flex bg-indigo-700/50 p-2 rounded-[36px] backdrop-blur-3xl overflow-x-auto no-scrollbar">
+                <div className="flex bg-indigo-700/50 p-2 rounded-[36px] backdrop-blur-3xl overflow-x-auto no-scrollbar w-full sm:w-auto">
                   <button onClick={() => setAdminView('students')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'students' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Students</button>
                   <button onClick={() => setAdminView('timetable')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'timetable' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Schedule</button>
                   <button onClick={() => setAdminView('broadcast')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'broadcast' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Broadcast</button>
@@ -477,33 +496,33 @@ const App: React.FC = () => {
                       <span className="text-xl font-black uppercase tracking-widest text-indigo-400">Enroll New Node</span>
                     </button>
                   </div>
-                  <div className="bg-slate-900/20 rounded-[56px] border border-white/5 overflow-x-auto shadow-2xl">
-                    <table className="w-full text-left min-w-[700px]">
-                      <thead>
-                        <tr className="bg-black/40 border-b border-white/5">
-                          <th className="px-12 py-8 text-[11px] font-black uppercase text-slate-500 tracking-widest">Profile</th>
-                          <th className="px-12 py-8 text-[11px] font-black uppercase text-slate-500 tracking-widest text-center">Aggregate</th>
-                          <th className="px-12 py-8 text-[11px] font-black uppercase text-slate-500 tracking-widest text-right">Terminals</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {allStudentData.map(s => (
-                          <tr key={s.sapId} className="hover:bg-black/20 transition-all group">
-                            <td className="px-12 py-8">
-                              <p className="font-black text-white text-2xl tracking-tight leading-tight">{s.name}</p>
-                              <p className="text-[11px] text-slate-600 font-bold uppercase tracking-widest mt-1">SAP ID: {s.sapId}</p>
-                            </td>
-                            <td className="px-12 py-8 text-center font-black"><span className={`text-4xl tracking-tighter ${s.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{s.overall}%</span></td>
-                            <td className="px-12 py-8 text-right">
-                              <div className="flex justify-end gap-4">
-                                <button onClick={() => setSelectedAdminStudent(s.sapId)} className="p-5 bg-indigo-600/10 text-indigo-400 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all active:scale-95"><Settings className="w-6 h-6" /></button>
-                                <button onClick={() => { if(confirm('Erase profile?')) setStudentsList(p => p.filter(x => x.sapId !== s.sapId)); }} className="p-5 bg-rose-600/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all active:scale-95"><Trash2 className="w-6 h-6" /></button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  
+                  {/* Redesigned Admin Student List for Mobile Compatibility */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {allStudentData.map(s => (
+                      <div key={s.sapId} className="bg-slate-900/20 rounded-[40px] border border-white/5 p-8 flex flex-col gap-6 hover:bg-slate-900/30 transition-all">
+                        <div className="flex justify-between items-start">
+                          <div className="min-w-0 pr-4">
+                            <h4 className="font-black text-white text-2xl tracking-tight leading-tight truncate">{s.name}</h4>
+                            <p className="text-[11px] text-slate-600 font-bold uppercase tracking-widest mt-1">ID: {s.sapId}</p>
+                          </div>
+                          <div className={`text-3xl font-black tracking-tighter shrink-0 ${s.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{s.overall}%</div>
+                        </div>
+                        <div className="flex gap-4">
+                          <button onClick={() => setSelectedAdminStudent(s.sapId)} className="flex-grow py-5 bg-indigo-600/10 text-indigo-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-3">
+                            <Settings className="w-5 h-5" /> Analytics
+                          </button>
+                          <button onClick={() => { if(confirm('Erase profile?')) setStudentsList(p => p.filter(x => x.sapId !== s.sapId)); }} className="p-5 bg-rose-600/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all">
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {allStudentData.length === 0 && (
+                      <div className="md:col-span-2 py-20 text-center opacity-20">
+                        <p className="font-black uppercase text-xs tracking-widest">Database Synchronized - No Students Found</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -553,21 +572,25 @@ const App: React.FC = () => {
 
       {/* --- ALL MODALS START HERE --- */}
 
-      {/* Status Log Modal */}
+      {/* Status Log Modal - FIXED WITH CANCEL OPTIONS */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowStatusModal(null)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-xl rounded-t-[56px] sm:rounded-[64px] p-10 sm:p-14 shadow-2xl border-t sm:border border-white/10">
+          <div className="relative bg-[#080808] w-full sm:max-w-xl rounded-t-[56px] sm:rounded-[64px] p-10 sm:p-14 shadow-2xl border-t sm:border border-white/10 overflow-y-auto max-h-[90vh]">
             <div className="flex justify-between items-start mb-12">
-              <div className="min-w-0">
-                <h3 className="text-3xl font-black text-white tracking-tighter">Record Status</h3>
+              <div className="min-w-0 pr-6">
+                <h3 className="text-3xl font-black text-white tracking-tighter leading-tight">Record Entry</h3>
                 <p className="text-slate-500 uppercase text-[10px] mt-2 font-bold tracking-widest truncate">{showStatusModal.subject}</p>
               </div>
               <button onClick={() => setShowStatusModal(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500 shrink-0"><X className="w-8 h-8" /></button>
             </div>
-            <div className="grid gap-4">
+            <div className="grid gap-3 mb-8">
               <StatusBtn icon={<CheckCircle className="text-emerald-500" />} label="Present" color="hover:bg-emerald-500/10" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'present')} />
               <StatusBtn icon={<XCircle className="text-rose-500" />} label="Absent" color="hover:bg-rose-500/10" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'absent')} />
+              <div className="grid grid-cols-2 gap-3">
+                <StatusBtn icon={<Ban className="text-slate-400" />} label="Cancel" color="hover:bg-white/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'cancelled')} />
+                <StatusBtn icon={<Umbrella className="text-amber-500" />} label="Holiday" color="hover:bg-amber-500/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'holiday')} />
+              </div>
               <StatusBtn icon={<RefreshCcw className="text-indigo-500" />} label="Substitute Session" color="hover:bg-indigo-500/10" onClick={() => setShowSubModal({lectureId: showStatusModal.lectureId, originalSubject: showStatusModal.subject})} />
             </div>
           </div>
@@ -587,9 +610,9 @@ const App: React.FC = () => {
               {subjectsList.map(sub => (
                 <div key={sub.name} className="bg-black/40 p-8 rounded-[40px] border border-white/5 flex items-center justify-between gap-6 group hover:border-indigo-500/30 transition-all shadow-xl">
                   <span className="font-black text-slate-200 text-lg truncate leading-tight tracking-tight">{sub.name}</span>
-                  <div className="flex gap-2">
-                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg shadow-emerald-500/20 active:scale-90 transition-all">P</button>
-                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg shadow-rose-500/20 active:scale-90 transition-all">A</button>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">P</button>
+                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">A</button>
                   </div>
                 </div>
               ))}
@@ -611,9 +634,9 @@ const App: React.FC = () => {
               {subjectsList.map(sub => (
                 <div key={sub.name} className="bg-black/40 p-8 rounded-[40px] border border-white/5 flex items-center justify-between gap-6 group hover:border-indigo-500/30 transition-all shadow-xl">
                   <span className="font-black text-slate-200 text-lg truncate leading-tight tracking-tight">{sub.name}</span>
-                  <div className="flex gap-2">
-                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg shadow-emerald-500/20 active:scale-90 transition-all">P</button>
-                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg shadow-rose-500/20 active:scale-90 transition-all">A</button>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">P</button>
+                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">A</button>
                   </div>
                 </div>
               ))}
@@ -622,24 +645,28 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Admin Student Details Modal */}
+      {/* Admin Student Details Modal - FIXED DATA VIEW */}
       {selectedAdminStudent && selectedStudentDetails && (
-        <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setSelectedAdminStudent(null)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[90vh] sm:h-[80vh] rounded-t-[56px] sm:rounded-[64px] border-t sm:border border-white/10 p-10 flex flex-col shadow-2xl">
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[90vh] sm:h-[85vh] rounded-t-[56px] sm:rounded-[64px] border-t sm:border border-white/10 p-8 sm:p-12 flex flex-col shadow-2xl">
             <div className="flex justify-between items-start mb-10">
-              <div className="min-w-0">
-                <h3 className="text-3xl font-black text-white tracking-tighter truncate">{selectedStudentDetails.name}</h3>
-                <p className="text-slate-500 uppercase text-[10px] mt-2 font-bold tracking-widest">Aggregate Score: {selectedStudentDetails.stats.overall}%</p>
+              <div className="min-w-0 pr-8">
+                <h3 className="text-3xl font-black text-white tracking-tighter truncate leading-tight">{selectedStudentDetails.name}</h3>
+                <div className="flex items-center gap-4 mt-2">
+                  <p className="text-slate-500 uppercase text-[10px] font-bold tracking-widest">Aggregate: {selectedStudentDetails.stats.overall}%</p>
+                  <span className="w-1 h-1 bg-slate-700 rounded-full" />
+                  <p className="text-slate-500 uppercase text-[10px] font-bold tracking-widest">ID: {selectedStudentDetails.sapId}</p>
+                </div>
               </div>
-              <button onClick={() => setSelectedAdminStudent(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500"><X className="w-8 h-8" /></button>
+              <button onClick={() => setSelectedAdminStudent(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500 shrink-0"><X className="w-8 h-8" /></button>
             </div>
-            <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-20">
+            <div className="flex-grow overflow-y-auto space-y-4 custom-scrollbar pr-3 pb-20">
               {selectedStudentDetails.stats.summary.map(sub => (
                 <div key={sub.name} className="bg-black/40 border border-white/5 p-8 rounded-[40px] flex justify-between items-center group hover:border-indigo-500/20 transition-all shadow-lg">
-                  <div className="min-w-0">
-                    <p className="font-black text-white text-xl truncate tracking-tight">{sub.name}</p>
-                    <p className="text-[10px] text-slate-600 font-black uppercase mt-2 tracking-widest">Ratio: {sub.present} / {sub.total}</p>
+                  <div className="min-w-0 pr-6">
+                    <p className="font-black text-white text-xl truncate tracking-tight leading-tight">{sub.name}</p>
+                    <p className="text-[10px] text-slate-600 font-black uppercase mt-2 tracking-widest">Sessions: {sub.present} / {sub.total}</p>
                   </div>
                   <h4 className={`text-4xl font-black tracking-tighter shrink-0 ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</h4>
                 </div>
@@ -651,7 +678,7 @@ const App: React.FC = () => {
 
       {/* Admin Add Student Modal */}
       {showAddStudentModal && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
+        <div className="fixed inset-0 z-[320] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-2xl" onClick={() => setShowAddStudentModal(false)} />
           <div className="relative bg-[#080808] w-full max-w-lg rounded-[64px] border border-white/10 p-12 shadow-2xl">
             <h3 className="text-3xl font-black text-white tracking-tighter mb-8 text-center">Enroll Student</h3>
@@ -755,8 +782,8 @@ const MobileNavItem: React.FC<{ icon: React.ReactNode; active: boolean; onClick:
 );
 
 const StatusBtn: React.FC<{ icon: React.ReactNode; label: string; color: string; onClick: () => void }> = ({ icon, label, color, onClick }) => (
-  <button onClick={onClick} className={`flex items-center gap-8 w-full p-8 bg-black/40 border border-white/5 rounded-[40px] transition-all ${color} font-black uppercase text-xs text-slate-400 text-left group tracking-widest pointer-events-auto active:scale-[0.98]`}>
-    {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-10 h-10 shrink-0 transition-all group-hover:scale-125' })}
+  <button onClick={onClick} className={`flex items-center gap-4 sm:gap-8 w-full p-6 sm:p-8 bg-black/40 border border-white/5 rounded-[32px] sm:rounded-[40px] transition-all ${color} font-black uppercase text-[10px] sm:text-xs text-slate-400 text-left group tracking-widest pointer-events-auto active:scale-[0.98]`}>
+    {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-8 h-8 sm:w-10 sm:h-10 shrink-0 transition-all group-hover:scale-110' })}
     {label}
   </button>
 );
