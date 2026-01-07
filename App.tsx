@@ -7,9 +7,10 @@ import {
 import { 
   Calendar, CheckCircle, XCircle, Clock, BookOpen, BarChart2, 
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
-  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella
+  MinusCircle, RefreshCcw, X, Plus, Sparkles, Wand2, LogOut, Lock, Cloud, ShieldCheck, Database, FileText, ArrowLeft, Palmtree, Trash2, UserCog, Settings, UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, Upload, FileUp, Loader2
 } from 'lucide-react';
-import { format, addDays, subDays, startOfToday, parseISO, addMinutes } from 'date-fns';
+import { format, addDays, subDays, startOfToday, parseISO } from 'date-fns';
+import { GoogleGenAI } from "@google/genai";
 import { FULL_SCHEDULE, SUBJECTS, AUTHORIZED_STUDENTS, DEFAULT_PASSWORD, ADMIN_SAP_ID, DAYS } from './constants';
 import { AttendanceRecord, AttendanceStatus, DayOfWeek, User, Lecture, Subject } from './types';
 
@@ -45,6 +46,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'subjects' | 'history' | 'admin'>('dashboard');
   const [selectedDate, setSelectedDate] = useState<Date>(startOfToday());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isParsingPDF, setIsParsingPDF] = useState(false);
   const [showNotificationCenter, setShowNotificationCenter] = useState(false);
   
   // Admin UI
@@ -57,11 +59,11 @@ const App: React.FC = () => {
   const [showStatusModal, setShowStatusModal] = useState<{lectureId: string, subject: string} | null>(null);
   const [showSubModal, setShowSubModal] = useState<{lectureId: string, originalSubject: string} | null>(null);
   const [showExtraModal, setShowExtraModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
   const [showAddLectureModal, setShowAddLectureModal] = useState<DayOfWeek | null>(null);
   
   // Core Data
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isAdmin = currentUser?.sapId === ADMIN_SAP_ID;
 
   // Persistence Effects
@@ -86,7 +88,6 @@ const App: React.FC = () => {
     
     setIsSyncing(true);
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
-    // Using a stable ID for regular lectures and timestamp for extra ones
     const recordId = lectureId.startsWith('extra-') ? `extra-${Date.now()}` : `${dateStr}-${lectureId}`;
     
     const newRecord: AttendanceRecord = { 
@@ -113,6 +114,61 @@ const App: React.FC = () => {
     setShowExtraModal(false);
   };
 
+  // AI-Powered PDF/Image Parsing
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentUser) return;
+
+    setIsParsingPDF(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64Data = (reader.result as string).split(',')[1];
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        const response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: [
+            {
+              parts: [
+                { inlineData: { data: base64Data, mimeType: file.type } },
+                { text: `Extract NMIMS student attendance records from this image/PDF. 
+                         Format as JSON array: [{"subject": "string", "status": "present|absent", "date": "YYYY-MM-DD"}].
+                         Ignore cancelled sessions or holidays. Only return the JSON block.` }
+              ]
+            }
+          ]
+        });
+
+        const jsonStr = response.text?.match(/\[.*\]/s)?.[0];
+        if (jsonStr) {
+          const extracted: {subject: string, status: string, date: string}[] = JSON.parse(jsonStr);
+          const newBatch: AttendanceRecord[] = extracted.map(item => ({
+            id: `imported-${Date.now()}-${Math.random()}`,
+            date: item.date,
+            lectureId: 'imported',
+            originalSubjectName: item.subject,
+            actualSubjectName: item.subject,
+            status: item.status as AttendanceStatus
+          }));
+
+          setRecords(prev => {
+            const updated = [...prev, ...newBatch];
+            localStorage.setItem(`nmims_backend_db_${currentUser.sapId}`, JSON.stringify(updated));
+            return updated;
+          });
+          alert(`Successfully synced ${newBatch.length} sessions.`);
+        }
+      };
+    } catch (err) {
+      console.error(err);
+      alert('AI Parsing failed. Ensure image is clear.');
+    } finally {
+      setIsParsingPDF(false);
+    }
+  };
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget as HTMLFormElement);
@@ -126,12 +182,6 @@ const App: React.FC = () => {
     } else {
       alert('Invalid Credentials.');
     }
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('nmims_session_user');
-    setActiveTab('dashboard');
   };
 
   const calculateStats = (userRecords: AttendanceRecord[]) => {
@@ -239,11 +289,11 @@ const App: React.FC = () => {
           )}
           {isAdmin && <NavItem icon={<Database />} label="Root Admin" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />}
         </nav>
-        <button onClick={handleLogout} className="mt-auto flex items-center gap-4 px-6 py-4 rounded-xl text-rose-500 font-black text-xs uppercase hover:bg-rose-500/10 transition-all"><LogOut className="w-5 h-5" /> Terminate</button>
+        <button onClick={() => { localStorage.removeItem('nmims_session_user'); window.location.reload(); }} className="mt-auto flex items-center gap-4 px-6 py-4 rounded-xl text-rose-500 font-black text-xs uppercase hover:bg-rose-500/10 transition-all"><LogOut className="w-5 h-5" /> Terminate</button>
       </aside>
 
       {/* Main Container */}
-      <main className="flex-grow h-screen overflow-y-auto custom-scrollbar relative flex flex-col pb-24 md:pb-0">
+      <main className="flex-grow h-screen overflow-y-auto custom-scrollbar relative flex flex-col pb-32 md:pb-0">
         {/* Mobile Header */}
         <div className="md:hidden flex items-center justify-between p-4 bg-[#080808]/90 backdrop-blur-xl border-b border-white/5 sticky top-0 z-[60]">
           <div className="flex items-center gap-3">
@@ -251,112 +301,90 @@ const App: React.FC = () => {
              <span className="font-black text-[10px] text-white uppercase tracking-widest truncate max-w-[100px]">{currentUser.name}</span>
           </div>
           <div className="flex items-center gap-1">
-            {isSyncing && <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse mr-2" />}
             <button onClick={() => setShowNotificationCenter(true)} className="p-2 text-slate-400 relative">
               <Bell className="w-5 h-5" />
               {broadcast && <span className="absolute top-1 right-1 w-2 h-2 bg-indigo-600 rounded-full border-2 border-[#080808]" />}
             </button>
-            <button onClick={handleLogout} className="p-2 text-rose-500"><LogOut className="w-5 h-5" /></button>
+            <button onClick={() => { localStorage.removeItem('nmims_session_user'); window.location.reload(); }} className="p-2 text-rose-500"><LogOut className="w-5 h-5" /></button>
           </div>
         </div>
 
-        <div className="p-5 sm:p-12 lg:p-20 space-y-10 sm:space-y-16">
+        <div className="p-5 sm:p-12 lg:p-20 space-y-12">
           {activeTab === 'dashboard' && (
-            <div className="space-y-10 sm:space-y-14 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
               <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
                 <div>
-                  <h1 className="text-4xl sm:text-6xl font-black text-white tracking-tighter">Command Center</h1>
-                  <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[10px] sm:text-xs mt-2">Personal Analytics Terminal</p>
+                  <h1 className="text-5xl sm:text-7xl font-black text-white tracking-tighter">Terminal 01</h1>
+                  <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[11px] sm:text-xs mt-2">Personal Attendance Matrix</p>
                 </div>
-                <button onClick={() => setShowNotificationCenter(true)} className="hidden sm:flex items-center gap-3 px-8 py-4 bg-slate-900/30 border border-white/5 rounded-2xl hover:bg-indigo-600/10 transition-all group">
-                  <Bell className="w-5 h-5 text-slate-500 group-hover:text-indigo-500" />
-                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Global Broadcasts</span>
-                </button>
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-900/40 p-6 rounded-[32px] border border-white/5 flex items-center gap-6">
+                    <div>
+                      <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Aggregate</p>
+                      <h3 className={`text-3xl font-black ${stats.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{stats.overall}%</h3>
+                    </div>
+                    <div className="w-12 h-12 bg-black/40 rounded-2xl flex items-center justify-center">
+                      <ShieldCheck className={`w-6 h-6 ${stats.overall >= 75 ? 'text-emerald-500' : 'text-rose-500'}`} />
+                    </div>
+                  </div>
+                </div>
               </header>
 
-              {/* Aggregated Stats */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="bg-slate-900/30 p-8 sm:p-10 rounded-[40px] border border-white/5 flex items-center justify-between group hover:border-indigo-500/20 transition-all">
-                  <div>
-                    <p className="text-slate-500 text-[9px] font-black uppercase tracking-widest">Aggregate</p>
-                    <h3 className="text-5xl sm:text-7xl font-black mt-2 text-white tracking-tighter">{stats.overall}%</h3>
-                  </div>
-                  <div className="h-20 w-20 sm:h-28 sm:w-28">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={[{v: stats.totalP}, {v: Math.max(0.1, stats.totalC-stats.totalP)}]} innerRadius={30} outerRadius={42} paddingAngle={4} dataKey="v" stroke="none">
-                          <Cell fill="#6366f1" />
-                          <Cell fill="#1a1a1a" />
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-                <div className="bg-slate-900/30 p-8 sm:p-10 rounded-[40px] border border-white/5 flex flex-col justify-center group hover:border-indigo-500/20 transition-all">
-                  <p className="text-slate-500 text-[9px] font-black uppercase tracking-widest">Attendance Ratio</p>
-                  <div className="flex items-baseline gap-3 mt-3">
-                    <h3 className="text-5xl sm:text-7xl font-black text-indigo-400 tracking-tighter">{stats.totalP}</h3>
-                    <span className="text-slate-600 text-2xl font-bold tracking-tighter">/ {stats.totalC}</span>
-                  </div>
-                </div>
-                <div className="bg-slate-900/30 p-8 sm:p-10 rounded-[40px] border border-white/5 group hover:border-indigo-500/20 transition-all sm:col-span-2 lg:col-span-1">
-                  <p className="text-slate-500 text-[9px] font-black uppercase tracking-widest">Integrity</p>
-                  <div className="mt-8 h-4 bg-black/40 rounded-full overflow-hidden">
-                    <div className={`h-full transition-all duration-1000 ${stats.overall >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(stats.overall, 100)}%` }} />
-                  </div>
-                  <p className={`text-[9px] mt-4 font-black uppercase tracking-widest ${stats.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{stats.overall >= 75 ? 'Operational' : 'Critical Hazard'}</p>
-                </div>
-              </div>
-
-              {/* Subject Performance List on Home Screen */}
+              {/* RESTORED SUBJECT LIST ON HOME SCREEN */}
               <section className="space-y-8">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><BookOpen className="w-8 h-8 text-indigo-500" /> Subject Metrics</h2>
-                  <button onClick={() => setActiveTab('subjects')} className="text-[10px] font-black uppercase text-indigo-400 tracking-widest hover:underline">View Strategy</button>
+                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><Database className="w-8 h-8 text-indigo-500" /> Data Nodes</h2>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {stats.summary.map(sub => (
-                    <div key={sub.name} className="bg-slate-900/20 p-6 rounded-[32px] border border-white/5 flex items-center justify-between group hover:bg-slate-900/40 transition-all">
-                      <div className="min-w-0 pr-4">
-                        <h4 className="font-black text-white text-lg tracking-tight truncate leading-tight">{sub.name}</h4>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Sessions: {sub.present}/{sub.total}</p>
+                    <div key={sub.name} className="bg-slate-900/30 p-8 rounded-[40px] border border-white/5 group hover:border-indigo-500/30 transition-all flex flex-col justify-between h-56 shadow-2xl relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-indigo-600 opacity-20" />
+                      <div>
+                        <div className="flex justify-between items-start mb-4">
+                          <h4 className="font-black text-white text-xl leading-tight truncate pr-4">{sub.name}</h4>
+                          <span className={`text-2xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Ratio: {sub.present} / {sub.total}</p>
                       </div>
-                      <div className={`text-2xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</div>
+                      <div className="space-y-4">
+                        <div className="h-2 bg-black/40 rounded-full overflow-hidden">
+                          <div className={`h-full transition-all duration-1000 ${sub.percentage >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(sub.percentage, 100)}%` }} />
+                        </div>
+                        <p className="text-[9px] font-black uppercase text-slate-600 tracking-widest">{sub.strategy}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
               </section>
 
               <section className="space-y-8">
-                <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Analytics Graph</h2>
-                <div className="bg-slate-900/30 p-6 sm:p-10 rounded-[56px] border border-white/5 shadow-2xl overflow-hidden">
-                  <div className="h-64 sm:h-96 w-full relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stats.summary}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1a1a1a" />
-                        <XAxis dataKey="name" hide />
-                        <YAxis hide domain={[0, 100]} />
-                        <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#080808', borderRadius: '24px', border: 'none', fontSize: '11px', fontWeight: 'bold' }} />
-                        <Bar dataKey="percentage" fill="#6366f1" radius={[12, 12, 0, 0]} barSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Statistical View</h2>
+                <div className="bg-slate-900/30 p-10 rounded-[56px] border border-white/5 shadow-2xl overflow-hidden h-96 relative">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.summary}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1a1a1a" />
+                      <XAxis dataKey="name" hide />
+                      <YAxis hide domain={[0, 100]} />
+                      <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#080808', borderRadius: '24px', border: 'none', fontSize: '11px', fontWeight: 'bold' }} />
+                      <Bar dataKey="percentage" fill="#6366f1" radius={[12, 12, 0, 0]} barSize={45} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               </section>
             </div>
           )}
 
           {activeTab === 'schedule' && (
-            <div className="space-y-10 animate-in fade-in slide-in-from-right-8 duration-700">
-              <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-slate-900/30 p-8 rounded-[48px] border border-white/5 gap-8">
-                <div className="flex items-center gap-8 justify-between w-full sm:w-auto">
-                  <button onClick={() => setSelectedDate(subDays(selectedDate, 1))} className="p-5 bg-black/40 rounded-3xl text-slate-500 hover:text-white transition-all"><ChevronLeft className="w-6 h-6" /></button>
-                  <div className="text-center min-w-[200px]"><h2 className="text-3xl font-black text-white tracking-tighter">{format(selectedDate, 'EEEE')}</h2><p className="text-slate-500 text-[11px] font-black uppercase mt-1 tracking-widest">{format(selectedDate, 'MMM do, yyyy')}</p></div>
-                  <button onClick={() => setSelectedDate(addDays(selectedDate, 1))} className="p-5 bg-black/40 rounded-3xl text-slate-500 hover:text-white transition-all"><ChevronRight className="w-6 h-6" /></button>
+            <div className="space-y-12 animate-in fade-in slide-in-from-right-8 duration-700">
+              <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-slate-900/30 p-10 rounded-[48px] border border-white/5 gap-8">
+                <div className="flex items-center gap-10 justify-between w-full sm:w-auto">
+                  <button onClick={() => setSelectedDate(subDays(selectedDate, 1))} className="p-6 bg-black/40 rounded-[32px] text-slate-500 hover:text-white transition-all"><ChevronLeft className="w-8 h-8" /></button>
+                  <div className="text-center min-w-[200px]"><h2 className="text-4xl font-black text-white tracking-tighter">{format(selectedDate, 'EEEE')}</h2><p className="text-slate-500 text-[11px] font-black uppercase mt-2 tracking-widest">{format(selectedDate, 'MMM do, yyyy')}</p></div>
+                  <button onClick={() => setSelectedDate(addDays(selectedDate, 1))} className="p-6 bg-black/40 rounded-[32px] text-slate-500 hover:text-white transition-all"><ChevronRight className="w-8 h-8" /></button>
                 </div>
                 <div className="flex gap-4">
-                  <button onClick={() => setSelectedDate(startOfToday())} className="px-10 py-5 bg-slate-900 text-slate-400 rounded-2xl font-black uppercase text-[10px] tracking-widest whitespace-nowrap">Current</button>
-                  <button onClick={() => setShowExtraModal(true)} className="px-10 py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center gap-3 whitespace-nowrap shadow-xl"><Plus className="w-5 h-5" /> Extra</button>
+                  <button onClick={() => setSelectedDate(startOfToday())} className="px-12 py-6 bg-slate-900 text-slate-400 rounded-3xl font-black uppercase text-[10px] tracking-widest whitespace-nowrap active:scale-95 transition-all">Today</button>
+                  <button onClick={() => setShowExtraModal(true)} className="px-12 py-6 bg-indigo-600 text-white rounded-3xl font-black uppercase text-[10px] tracking-widest flex items-center gap-4 whitespace-nowrap shadow-2xl active:scale-95 transition-all"><Plus className="w-6 h-6" /> Extra</button>
                 </div>
               </header>
 
@@ -365,20 +393,20 @@ const App: React.FC = () => {
                   timetable.filter(l => l.day === selectedDayName).map(lecture => {
                     const record = records.find(r => r.id === `${todayStr}-${lecture.id}`);
                     return (
-                      <div key={lecture.id} className="bg-slate-900/20 p-8 sm:p-10 rounded-[48px] border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-8 group hover:bg-slate-900/30 transition-all shadow-xl">
-                        <div className="flex items-center gap-8">
-                          <div className="w-20 h-20 bg-black/40 rounded-[32px] flex items-center justify-center border border-white/5 group-hover:border-indigo-500/20 transition-all"><Clock className="w-10 h-10 text-slate-700 group-hover:text-indigo-400" /></div>
+                      <div key={lecture.id} className="bg-slate-900/20 p-10 rounded-[56px] border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-10 group hover:bg-slate-900/30 transition-all shadow-xl relative overflow-hidden">
+                        <div className="flex items-center gap-10">
+                          <div className="w-24 h-24 bg-black/40 rounded-[40px] flex items-center justify-center border border-white/5 group-hover:border-indigo-500/20 transition-all shadow-inner"><Clock className="w-12 h-12 text-slate-700 group-hover:text-indigo-400" /></div>
                           <div>
-                            <h4 className="font-black text-slate-100 text-2xl tracking-tight leading-tight">{record?.actualSubjectName || lecture.subject}</h4>
-                            <div className="flex flex-wrap items-center gap-6 text-slate-600 text-[11px] mt-5 font-black uppercase tracking-widest">
-                              <span className="flex items-center gap-2"><Clock className="w-4 h-4" /> {lecture.time}</span>
-                              <span className="flex items-center gap-2"><UserIcon className="w-4 h-4" /> {lecture.faculty}</span>
+                            <h4 className="font-black text-slate-100 text-3xl tracking-tight leading-tight mb-4">{record?.actualSubjectName || lecture.subject}</h4>
+                            <div className="flex flex-wrap items-center gap-8 text-slate-600 text-[11px] font-black uppercase tracking-widest">
+                              <span className="flex items-center gap-3"><Clock className="w-4 h-4" /> {lecture.time}</span>
+                              <span className="flex items-center gap-3"><UserIcon className="w-4 h-4" /> {lecture.faculty}</span>
                             </div>
                           </div>
                         </div>
                         <button 
                           onClick={() => setShowStatusModal({lectureId: lecture.id, subject: lecture.subject})} 
-                          className={`w-full sm:w-auto px-14 py-6 rounded-[32px] font-black text-[11px] uppercase border tracking-widest transition-all pointer-events-auto active:scale-95 ${ record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : record?.status === 'cancelled' || record?.status === 'holiday' ? 'bg-slate-500/10 text-slate-500 border-slate-500/20' : 'bg-black/40 text-slate-500 border-white/10' }`}
+                          className={`w-full sm:w-auto px-16 py-7 rounded-[40px] font-black text-[11px] uppercase border tracking-widest transition-all pointer-events-auto active:scale-95 ${ record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-emerald-500/5' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20 shadow-rose-500/5' : record?.status === 'cancelled' || record?.status === 'holiday' ? 'bg-slate-500/10 text-slate-500 border-slate-500/20' : 'bg-black/40 text-slate-500 border-white/10' }`}
                         >
                           {record?.status || 'Record Entry'}
                         </button>
@@ -386,9 +414,9 @@ const App: React.FC = () => {
                     );
                   })
                 ) : (
-                  <div className="py-24 text-center opacity-30 flex flex-col items-center gap-6">
-                    <Calendar className="w-16 h-16" />
-                    <p className="font-black uppercase text-xs tracking-widest">No Sessions Scheduled</p>
+                  <div className="py-32 text-center opacity-30 flex flex-col items-center gap-8">
+                    <Calendar className="w-20 h-20" />
+                    <p className="font-black uppercase text-sm tracking-widest">No Sessions Scheduled</p>
                   </div>
                 )}
               </div>
@@ -396,35 +424,35 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'subjects' && (
-            <div className="space-y-10 animate-in fade-in duration-700">
+            <div className="space-y-12 animate-in fade-in duration-700">
               <header>
-                <h1 className="text-4xl sm:text-6xl font-black text-white tracking-tighter">Tactical Strategy</h1>
-                <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[10px] sm:text-xs mt-2">Predictive Modeling Engine</p>
+                <h1 className="text-5xl sm:text-7xl font-black text-white tracking-tighter">Tactical Strategy</h1>
+                <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[11px] sm:text-xs mt-2">Predictive Modeling Engine</p>
               </header>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                 {stats.summary.map(sub => (
-                  <div key={sub.name} className="bg-slate-900/40 rounded-[48px] border border-white/5 overflow-hidden shadow-2xl flex flex-col group hover:border-indigo-500/20 transition-all">
-                    <div className="p-8 bg-black/40 border-b border-white/5 flex justify-between items-start gap-4">
+                  <div key={sub.name} className="bg-slate-900/40 rounded-[56px] border border-white/5 overflow-hidden shadow-2xl flex flex-col group hover:border-indigo-500/20 transition-all">
+                    <div className="p-10 bg-black/40 border-b border-white/5 flex justify-between items-start gap-6">
                       <div className="min-w-0">
-                        <h3 className="font-black text-white text-xl leading-tight mb-2 tracking-tight group-hover:text-indigo-400 transition-colors line-clamp-2">{sub.name}</h3>
-                        <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest">Module Analytics</p>
+                        <h3 className="font-black text-white text-2xl leading-tight mb-3 tracking-tight group-hover:text-indigo-400 transition-colors line-clamp-2">{sub.name}</h3>
+                        <p className="text-[11px] text-slate-600 font-black uppercase tracking-widest">Module Analytics</p>
                       </div>
-                      <Calculator className="w-6 h-6 text-indigo-500 shrink-0" />
+                      <Calculator className="w-8 h-8 text-indigo-500 shrink-0" />
                     </div>
-                    <div className="p-10 space-y-10">
+                    <div className="p-12 space-y-12">
                       <div className="flex justify-between items-end">
                         <div>
-                          <p className="text-slate-600 text-[10px] font-black uppercase tracking-widest mb-1">Percentage</p>
-                          <p className={`text-5xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</p>
+                          <p className="text-slate-600 text-[11px] font-black uppercase tracking-widest mb-2">Percentage</p>
+                          <p className={`text-6xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</p>
                         </div>
                         <div className="text-right">
-                          <p className="text-slate-600 text-[10px] font-black uppercase tracking-widest mb-1">Ratio</p>
-                          <p className="text-2xl font-black text-slate-300 tracking-tighter">{sub.present}/{sub.total}</p>
+                          <p className="text-slate-600 text-[11px] font-black uppercase tracking-widest mb-2">Ratio</p>
+                          <p className="text-3xl font-black text-slate-300 tracking-tighter">{sub.present}/{sub.total}</p>
                         </div>
                       </div>
-                      <div className={`p-6 rounded-[32px] border ${sub.strategyType === 'recovery' ? 'bg-rose-500/5 border-rose-500/20 text-rose-300' : 'bg-indigo-500/5 border-indigo-500/20 text-indigo-300'}`}>
-                        <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">System Intelligence</p>
-                        <p className="font-bold text-sm leading-snug">{sub.strategy}</p>
+                      <div className={`p-8 rounded-[40px] border ${sub.strategyType === 'recovery' ? 'bg-rose-500/5 border-rose-500/20 text-rose-300 shadow-rose-500/5' : 'bg-indigo-500/5 border-indigo-500/20 text-indigo-300 shadow-indigo-500/5'}`}>
+                        <p className="text-[11px] font-black uppercase tracking-widest opacity-60 mb-3">System Intelligence</p>
+                        <p className="font-bold text-base leading-snug">{sub.strategy}</p>
                       </div>
                     </div>
                   </div>
@@ -434,24 +462,36 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'history' && (
-            <div className="space-y-10 animate-in fade-in duration-700">
-              <header className="flex flex-col sm:flex-row justify-between items-center bg-slate-900/30 p-8 rounded-[48px] border border-white/5 gap-8">
-                <div><h2 className="text-3xl font-black text-white tracking-tighter">Session Logs</h2><p className="text-[10px] text-slate-500 font-black uppercase mt-4 tracking-widest">Archive Management</p></div>
+            <div className="space-y-12 animate-in fade-in duration-700">
+              <header className="flex flex-col sm:flex-row justify-between items-center bg-slate-900/30 p-10 rounded-[56px] border border-white/5 gap-8">
+                <div><h2 className="text-4xl font-black text-white tracking-tighter">Session Logs</h2><p className="text-[11px] text-slate-500 font-black uppercase mt-4 tracking-widest">Archive Management</p></div>
+                <div className="flex gap-4 w-full sm:w-auto">
+                  <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*,.pdf" className="hidden" />
+                  <button 
+                    onClick={() => fileInputRef.current?.click()} 
+                    disabled={isParsingPDF}
+                    className="flex-grow sm:flex-none px-12 py-6 bg-indigo-600 text-white rounded-[32px] font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-4 shadow-2xl active:scale-95 disabled:opacity-50 transition-all"
+                  >
+                    {isParsingPDF ? <Loader2 className="w-6 h-6 animate-spin" /> : <FileUp className="w-6 h-6" />}
+                    {isParsingPDF ? 'Analyzing...' : 'Cloud Import'}
+                  </button>
+                </div>
               </header>
-              <div className="space-y-8">
+              <div className="space-y-10">
                 {groupedHistory.length > 0 ? (
                   groupedHistory.map(([date, dayRecords]) => (
-                    <div key={date} className="bg-slate-900/20 rounded-[48px] border border-white/5 overflow-hidden shadow-2xl">
-                      <div className="bg-black/40 px-10 py-6 border-b border-white/5"><h3 className="font-black text-xs text-slate-500 uppercase tracking-widest">{format(parseISO(date), 'EEEE, MMM do, yyyy')}</h3></div>
+                    <div key={date} className="bg-slate-900/20 rounded-[56px] border border-white/5 overflow-hidden shadow-2xl">
+                      <div className="bg-black/40 px-12 py-8 border-b border-white/5"><h3 className="font-black text-xs text-slate-500 uppercase tracking-widest">{format(parseISO(date), 'EEEE, MMM do, yyyy')}</h3></div>
                       <div className="divide-y divide-white/5">
                         {dayRecords.map(r => (
-                          <div key={r.id} className="px-10 py-8 flex items-center justify-between hover:bg-black/20 transition-all gap-4">
-                            <div className="min-w-0 pr-4">
-                              <p className="text-white font-black text-2xl tracking-tight truncate">{r.actualSubjectName}</p>
+                          <div key={r.id} className="px-12 py-10 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-black/20 transition-all gap-8">
+                            <div className="min-w-0 pr-6">
+                              <p className="text-white font-black text-2xl tracking-tight truncate leading-tight">{r.actualSubjectName}</p>
+                              <p className="text-[10px] text-slate-600 uppercase font-bold tracking-widest mt-2">{r.originalSubjectName === 'Extra' ? 'Custom Session' : 'Scheduled Node'}</p>
                             </div>
-                            <div className="flex items-center gap-6 shrink-0">
-                              <span className={`px-5 py-2 rounded-xl text-[11px] font-black uppercase border ${r.status === 'present' ? 'text-emerald-400 border-emerald-500/20' : r.status === 'absent' ? 'text-rose-400 border-rose-500/20' : 'text-slate-500 border-white/10'}`}>{r.status}</span>
-                              <button onClick={() => { if(confirm('Delete record?')) setRecords(prev => prev.filter(x => x.id !== r.id)); }} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all"><Trash2 className="w-5 h-5" /></button>
+                            <div className="flex items-center justify-between sm:justify-end gap-10 shrink-0">
+                              <span className={`px-8 py-3 rounded-2xl text-[12px] font-black uppercase border shadow-lg ${r.status === 'present' ? 'text-emerald-400 border-emerald-500/20' : r.status === 'absent' ? 'text-rose-400 border-rose-500/20' : 'text-slate-500 border-white/10'}`}>{r.status}</span>
+                              <button onClick={() => { if(confirm('Delete record?')) setRecords(prev => prev.filter(x => x.id !== r.id)); }} className="p-6 bg-rose-500/10 text-rose-500 rounded-[28px] hover:bg-rose-600 hover:text-white transition-all shadow-lg"><Trash2 className="w-7 h-7" /></button>
                             </div>
                           </div>
                         ))}
@@ -459,9 +499,9 @@ const App: React.FC = () => {
                     </div>
                   ))
                 ) : (
-                  <div className="py-40 text-center opacity-20 flex flex-col items-center gap-6">
-                    <History className="w-24 h-24" />
-                    <p className="font-black uppercase text-sm tracking-widest">No Logs Found</p>
+                  <div className="py-48 text-center opacity-20 flex flex-col items-center gap-10">
+                    <History className="w-28 h-28" />
+                    <p className="font-black uppercase text-base tracking-widest">Database Synchronized - No Logs</p>
                   </div>
                 )}
               </div>
@@ -470,85 +510,79 @@ const App: React.FC = () => {
 
           {activeTab === 'admin' && isAdmin && (
             <div className="space-y-12 animate-in fade-in duration-700">
-              <header className="flex flex-col lg:flex-row justify-between items-center bg-indigo-600 p-10 sm:p-14 rounded-[56px] gap-10 shadow-2xl">
-                <div><h2 className="text-4xl sm:text-6xl font-black text-white tracking-tighter">Root Admin</h2><p className="text-indigo-100 text-[11px] font-black uppercase mt-4 tracking-widest">Master Node Logic</p></div>
-                <div className="flex bg-indigo-700/50 p-2 rounded-[36px] backdrop-blur-3xl overflow-x-auto no-scrollbar w-full sm:w-auto">
-                  <button onClick={() => setAdminView('students')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'students' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Students</button>
-                  <button onClick={() => setAdminView('timetable')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'timetable' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Schedule</button>
-                  <button onClick={() => setAdminView('broadcast')} className={`px-12 py-5 rounded-[28px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'broadcast' ? 'bg-white text-indigo-600 shadow-lg' : 'text-white/70 hover:text-white'}`}>Broadcast</button>
+              <header className="flex flex-col lg:flex-row justify-between items-center bg-indigo-600 p-12 sm:p-16 rounded-[64px] gap-12 shadow-2xl">
+                <div><h2 className="text-5xl sm:text-7xl font-black text-white tracking-tighter leading-none">Root Admin</h2><p className="text-indigo-100 text-[11px] font-black uppercase mt-6 tracking-[0.2em] opacity-80">Master Control Interface</p></div>
+                <div className="flex bg-indigo-700/50 p-3 rounded-[40px] backdrop-blur-3xl overflow-x-auto no-scrollbar w-full sm:w-auto shadow-2xl">
+                  <button onClick={() => setAdminView('students')} className={`px-14 py-6 rounded-[32px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'students' ? 'bg-white text-indigo-600 shadow-2xl' : 'text-white/70 hover:text-white'}`}>Nodes</button>
+                  <button onClick={() => setAdminView('timetable')} className={`px-14 py-6 rounded-[32px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'timetable' ? 'bg-white text-indigo-600 shadow-2xl' : 'text-white/70 hover:text-white'}`}>Rules</button>
+                  <button onClick={() => setAdminView('broadcast')} className={`px-14 py-6 rounded-[32px] font-black uppercase text-[11px] tracking-widest transition-all ${adminView === 'broadcast' ? 'bg-white text-indigo-600 shadow-2xl' : 'text-white/70 hover:text-white'}`}>Comms</button>
                 </div>
               </header>
 
-              {adminView === 'broadcast' && (
-                <div className="bg-slate-900/30 p-10 rounded-[56px] border border-white/5 space-y-8 animate-in zoom-in duration-300">
-                  <h3 className="text-3xl font-black text-white flex items-center gap-4"><Megaphone className="w-8 h-8 text-indigo-500" /> Global Dispatch</h3>
-                  <textarea value={broadcastInput} onChange={(e) => setBroadcastInput(e.target.value)} placeholder="Enter emergency broadcast message for all students..." className="w-full bg-black/40 border border-white/10 rounded-[32px] p-8 text-white outline-none focus:border-indigo-500 h-48 font-bold text-lg transition-all" />
-                  <button onClick={() => { if(broadcastInput) { setBroadcast({message: broadcastInput, timestamp: Date.now()}); setBroadcastInput(''); alert('Broadcast deployed successfully.'); } }} className="w-full sm:w-auto px-14 py-6 bg-indigo-600 text-white rounded-[28px] font-black uppercase text-xs tracking-widest shadow-2xl flex items-center justify-center gap-4 active:scale-95 transition-all"><Send className="w-6 h-6" /> Deploy Broadcast</button>
-                </div>
-              )}
-
               {adminView === 'students' && (
-                <div className="space-y-10">
+                <div className="space-y-12">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-                    <div className="bg-slate-900/20 p-10 rounded-[48px] border border-white/5"><p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Enrolled Nodes</p><h4 className="text-5xl font-black text-white mt-4">{allStudentData.length}</h4></div>
-                    <button onClick={() => setShowAddStudentModal(true)} className="sm:col-span-2 bg-indigo-600/5 border-2 border-dashed border-indigo-500/20 rounded-[48px] flex items-center justify-center gap-6 group hover:bg-indigo-600/10 transition-all p-8">
-                      <UserPlus className="w-10 h-10 text-indigo-500 group-hover:scale-110 transition-all" />
-                      <span className="text-xl font-black uppercase tracking-widest text-indigo-400">Enroll New Node</span>
+                    <div className="bg-slate-900/30 p-12 rounded-[56px] border border-white/5 flex flex-col justify-center shadow-2xl"><p className="text-slate-500 text-[11px] font-black uppercase tracking-widest opacity-60">Verified Users</p><h4 className="text-7xl font-black text-white mt-6 tracking-tighter">{allStudentData.length}</h4></div>
+                    <button onClick={() => setShowAddStudentModal(true)} className="sm:col-span-2 bg-indigo-600/5 border-2 border-dashed border-indigo-500/20 rounded-[56px] flex flex-col items-center justify-center gap-6 group hover:bg-indigo-600/10 transition-all p-12 active:scale-[0.98]">
+                      <UserPlus className="w-16 h-16 text-indigo-500 group-hover:scale-110 transition-all" />
+                      <span className="text-2xl font-black uppercase tracking-widest text-indigo-400">Enroll Student</span>
                     </button>
                   </div>
                   
-                  {/* Redesigned Admin Student List for Mobile Compatibility */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     {allStudentData.map(s => (
-                      <div key={s.sapId} className="bg-slate-900/20 rounded-[40px] border border-white/5 p-8 flex flex-col gap-6 hover:bg-slate-900/30 transition-all">
+                      <div key={s.sapId} className="bg-slate-900/20 rounded-[48px] border border-white/5 p-10 flex flex-col gap-10 hover:bg-slate-900/30 transition-all shadow-2xl relative group">
                         <div className="flex justify-between items-start">
-                          <div className="min-w-0 pr-4">
-                            <h4 className="font-black text-white text-2xl tracking-tight leading-tight truncate">{s.name}</h4>
-                            <p className="text-[11px] text-slate-600 font-bold uppercase tracking-widest mt-1">ID: {s.sapId}</p>
+                          <div className="min-w-0 pr-6">
+                            <h4 className="font-black text-white text-3xl tracking-tight leading-tight truncate">{s.name}</h4>
+                            <p className="text-[12px] text-slate-600 font-bold uppercase tracking-widest mt-2">SAP ID: {s.sapId}</p>
                           </div>
-                          <div className={`text-3xl font-black tracking-tighter shrink-0 ${s.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{s.overall}%</div>
+                          <div className={`text-4xl font-black tracking-tighter shrink-0 ${s.overall >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{s.overall}%</div>
                         </div>
                         <div className="flex gap-4">
-                          <button onClick={() => setSelectedAdminStudent(s.sapId)} className="flex-grow py-5 bg-indigo-600/10 text-indigo-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-3">
-                            <Settings className="w-5 h-5" /> Analytics
+                          <button onClick={() => setSelectedAdminStudent(s.sapId)} className="flex-grow py-7 bg-indigo-600/10 text-indigo-400 rounded-[32px] font-black uppercase text-[11px] tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-4 shadow-lg active:scale-95">
+                            <Settings className="w-6 h-6" /> View Analytics
                           </button>
-                          <button onClick={() => { if(confirm('Erase profile?')) setStudentsList(p => p.filter(x => x.sapId !== s.sapId)); }} className="p-5 bg-rose-600/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all">
-                            <Trash2 className="w-5 h-5" />
+                          <button onClick={() => { if(confirm('Erase profile?')) setStudentsList(p => p.filter(x => x.sapId !== s.sapId)); }} className="p-7 bg-rose-600/10 text-rose-500 rounded-[32px] hover:bg-rose-600 hover:text-white transition-all shadow-lg active:scale-95">
+                            <Trash2 className="w-7 h-7" />
                           </button>
                         </div>
                       </div>
                     ))}
-                    {allStudentData.length === 0 && (
-                      <div className="md:col-span-2 py-20 text-center opacity-20">
-                        <p className="font-black uppercase text-xs tracking-widest">Database Synchronized - No Students Found</p>
-                      </div>
-                    )}
                   </div>
+                </div>
+              )}
+
+              {adminView === 'broadcast' && (
+                <div className="bg-slate-900/30 p-12 rounded-[64px] border border-white/5 space-y-10 animate-in zoom-in duration-300 shadow-2xl">
+                  <h3 className="text-4xl font-black text-white flex items-center gap-6"><Megaphone className="w-10 h-10 text-indigo-500" /> Global Dispatch</h3>
+                  <textarea value={broadcastInput} onChange={(e) => setBroadcastInput(e.target.value)} placeholder="Enter emergency broadcast message for all system users..." className="w-full bg-black/40 border border-white/10 rounded-[40px] p-10 text-white outline-none focus:border-indigo-500 h-64 font-bold text-xl transition-all shadow-inner" />
+                  <button onClick={() => { if(broadcastInput) { setBroadcast({message: broadcastInput, timestamp: Date.now()}); setBroadcastInput(''); alert('Message deployed.'); } }} className="w-full sm:w-auto px-16 py-8 bg-indigo-600 text-white rounded-[36px] font-black uppercase text-[12px] tracking-widest shadow-2xl flex items-center justify-center gap-6 active:scale-95 transition-all"><Send className="w-7 h-7" /> Deploy Transmission</button>
                 </div>
               )}
 
               {adminView === 'timetable' && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 pb-20">
                   {DAYS.map(day => (
-                    <div key={day} className="bg-slate-900/20 rounded-[56px] border border-white/5 overflow-hidden shadow-2xl flex flex-col hover:border-indigo-500/10 transition-all">
-                      <div className="bg-black/40 p-10 flex justify-between items-center border-b border-white/5">
-                        <h3 className="font-black text-2xl text-white tracking-widest uppercase">{day}</h3>
-                        <button onClick={() => setShowAddLectureModal(day)} className="p-5 bg-indigo-600 rounded-3xl text-white shadow-xl active:scale-95 transition-all"><Plus className="w-6 h-6" /></button>
+                    <div key={day} className="bg-slate-900/20 rounded-[64px] border border-white/5 overflow-hidden shadow-2xl flex flex-col hover:border-indigo-500/10 transition-all">
+                      <div className="bg-black/40 p-12 flex justify-between items-center border-b border-white/5">
+                        <h3 className="font-black text-3xl text-white tracking-widest uppercase leading-none">{day}</h3>
+                        <button onClick={() => setShowAddLectureModal(day)} className="p-6 bg-indigo-600 rounded-[32px] text-white shadow-2xl active:scale-95 transition-all"><Plus className="w-7 h-7" /></button>
                       </div>
-                      <div className="p-10 space-y-6">
+                      <div className="p-12 space-y-8">
                         {timetable.filter(l => l.day === day).length > 0 ? (
                           timetable.filter(l => l.day === day).map(lecture => (
-                            <div key={lecture.id} className="flex items-center justify-between p-8 bg-black/30 rounded-[40px] border border-white/5 group hover:border-indigo-500 transition-all gap-4">
-                              <div className="min-w-0">
-                                <p className="font-black text-white text-2xl tracking-tight leading-tight truncate">{lecture.subject}</p>
-                                <p className="text-[11px] text-slate-600 uppercase font-black tracking-widest mt-4 flex items-center gap-3"><Clock className="w-4 h-4" /> {lecture.time}</p>
+                            <div key={lecture.id} className="flex items-center justify-between p-10 bg-black/30 rounded-[48px] border border-white/5 group hover:border-indigo-500 transition-all gap-8">
+                              <div className="min-w-0 pr-6">
+                                <p className="font-black text-white text-2xl tracking-tight leading-tight mb-4 truncate">{lecture.subject}</p>
+                                <p className="text-[12px] text-slate-600 uppercase font-black tracking-widest flex items-center gap-4"><Clock className="w-5 h-5" /> {lecture.time}</p>
                               </div>
-                              <button onClick={() => setTimetable(prev => prev.filter(x => x.id !== lecture.id))} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-600 hover:text-white transition-all active:scale-95 shrink-0"><Trash2 className="w-5 h-5" /></button>
+                              <button onClick={() => setTimetable(prev => prev.filter(x => x.id !== lecture.id))} className="p-6 bg-rose-500/10 text-rose-500 rounded-[28px] hover:bg-rose-600 hover:text-white transition-all active:scale-95 shrink-0 shadow-lg"><Trash2 className="w-6 h-6" /></button>
                             </div>
                           ))
                         ) : (
-                          <div className="py-10 text-center opacity-20">
-                            <p className="text-[10px] font-black uppercase tracking-widest">No Sessions Defined</p>
+                          <div className="py-14 text-center opacity-20">
+                            <p className="text-[11px] font-black uppercase tracking-widest">No Operational Nodes</p>
                           </div>
                         )}
                       </div>
@@ -562,7 +596,7 @@ const App: React.FC = () => {
       </main>
 
       {/* Persistent Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-4 pb-10 z-[100]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-5 pb-10 z-[100]">
         <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
         <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
         <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
@@ -572,103 +606,55 @@ const App: React.FC = () => {
 
       {/* --- ALL MODALS START HERE --- */}
 
-      {/* Status Log Modal - FIXED WITH CANCEL OPTIONS */}
+      {/* Status Log Modal */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowStatusModal(null)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-xl rounded-t-[56px] sm:rounded-[64px] p-10 sm:p-14 shadow-2xl border-t sm:border border-white/10 overflow-y-auto max-h-[90vh]">
-            <div className="flex justify-between items-start mb-12">
-              <div className="min-w-0 pr-6">
-                <h3 className="text-3xl font-black text-white tracking-tighter leading-tight">Record Entry</h3>
-                <p className="text-slate-500 uppercase text-[10px] mt-2 font-bold tracking-widest truncate">{showStatusModal.subject}</p>
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowStatusModal(null)} />
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl rounded-t-[64px] sm:rounded-[72px] p-12 sm:p-16 shadow-2xl border-t sm:border border-white/10 overflow-y-auto max-h-[95vh]">
+            <div className="flex justify-between items-start mb-14">
+              <div className="min-w-0 pr-10">
+                <h3 className="text-4xl font-black text-white tracking-tighter leading-tight">Update Node</h3>
+                <p className="text-slate-500 uppercase text-[11px] mt-4 font-bold tracking-[0.2em] truncate">{showStatusModal.subject}</p>
               </div>
-              <button onClick={() => setShowStatusModal(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500 shrink-0"><X className="w-8 h-8" /></button>
+              <button onClick={() => setShowStatusModal(null)} className="p-6 bg-white/5 rounded-[32px] text-slate-500 shrink-0"><X className="w-10 h-10" /></button>
             </div>
-            <div className="grid gap-3 mb-8">
-              <StatusBtn icon={<CheckCircle className="text-emerald-500" />} label="Present" color="hover:bg-emerald-500/10" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'present')} />
-              <StatusBtn icon={<XCircle className="text-rose-500" />} label="Absent" color="hover:bg-rose-500/10" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'absent')} />
-              <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-4 mb-10">
+              <StatusBtn icon={<CheckCircle className="text-emerald-500" />} label="Present" color="hover:bg-emerald-500/10 border-emerald-500/10 shadow-emerald-500/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'present')} />
+              <StatusBtn icon={<XCircle className="text-rose-500" />} label="Absent" color="hover:bg-rose-500/10 border-rose-500/10 shadow-rose-500/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'absent')} />
+              <div className="grid grid-cols-2 gap-4">
                 <StatusBtn icon={<Ban className="text-slate-400" />} label="Cancel" color="hover:bg-white/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'cancelled')} />
                 <StatusBtn icon={<Umbrella className="text-amber-500" />} label="Holiday" color="hover:bg-amber-500/5" onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, 'holiday')} />
               </div>
-              <StatusBtn icon={<RefreshCcw className="text-indigo-500" />} label="Substitute Session" color="hover:bg-indigo-500/10" onClick={() => setShowSubModal({lectureId: showStatusModal.lectureId, originalSubject: showStatusModal.subject})} />
+              <StatusBtn icon={<RefreshCcw className="text-indigo-500" />} label="Substitution" color="hover:bg-indigo-500/10 border-indigo-500/10" onClick={() => setShowSubModal({lectureId: showStatusModal.lectureId, originalSubject: showStatusModal.subject})} />
             </div>
           </div>
         </div>
       )}
 
-      {/* Substitution Modal */}
-      {showSubModal && (
-        <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowSubModal(null)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-xl h-[80vh] rounded-t-[56px] sm:rounded-[64px] border-t sm:border border-white/10 p-10 flex flex-col shadow-2xl">
-            <div className="flex justify-between items-center mb-10">
-              <h3 className="text-2xl font-black text-white tracking-tighter">Choose Sub Subject</h3>
-              <button onClick={() => setShowSubModal(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500"><X className="w-8 h-8" /></button>
-            </div>
-            <div className="flex-grow overflow-y-auto space-y-4 custom-scrollbar pr-3 pb-10">
-              {subjectsList.map(sub => (
-                <div key={sub.name} className="bg-black/40 p-8 rounded-[40px] border border-white/5 flex items-center justify-between gap-6 group hover:border-indigo-500/30 transition-all shadow-xl">
-                  <span className="font-black text-slate-200 text-lg truncate leading-tight tracking-tight">{sub.name}</span>
-                  <div className="flex gap-2 shrink-0">
-                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">P</button>
-                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">A</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Extra Session Modal */}
-      {showExtraModal && (
-        <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowExtraModal(false)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-xl h-[80vh] rounded-t-[56px] sm:rounded-[64px] border-t sm:border border-white/10 p-10 flex flex-col shadow-2xl">
-            <div className="flex justify-between items-center mb-10">
-              <h3 className="text-2xl font-black text-white tracking-tighter">Log Extra Session</h3>
-              <button onClick={() => setShowExtraModal(false)} className="p-4 bg-white/5 rounded-3xl text-slate-500"><X className="w-8 h-8" /></button>
-            </div>
-            <div className="flex-grow overflow-y-auto space-y-4 custom-scrollbar pr-3 pb-10">
-              {subjectsList.map(sub => (
-                <div key={sub.name} className="bg-black/40 p-8 rounded-[40px] border border-white/5 flex items-center justify-between gap-6 group hover:border-indigo-500/30 transition-all shadow-xl">
-                  <span className="font-black text-slate-200 text-lg truncate leading-tight tracking-tight">{sub.name}</span>
-                  <div className="flex gap-2 shrink-0">
-                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'present', sub.name)} className="w-12 h-12 bg-emerald-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">P</button>
-                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'absent', sub.name)} className="w-12 h-12 bg-rose-500 text-black rounded-2xl font-black shadow-lg active:scale-90 transition-all">A</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Admin Student Details Modal - FIXED DATA VIEW */}
+      {/* Admin Student Details Modal (FIXED) */}
       {selectedAdminStudent && selectedStudentDetails && (
         <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setSelectedAdminStudent(null)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[90vh] sm:h-[85vh] rounded-t-[56px] sm:rounded-[64px] border-t sm:border border-white/10 p-8 sm:p-12 flex flex-col shadow-2xl">
-            <div className="flex justify-between items-start mb-10">
-              <div className="min-w-0 pr-8">
-                <h3 className="text-3xl font-black text-white tracking-tighter truncate leading-tight">{selectedStudentDetails.name}</h3>
-                <div className="flex items-center gap-4 mt-2">
-                  <p className="text-slate-500 uppercase text-[10px] font-bold tracking-widest">Aggregate: {selectedStudentDetails.stats.overall}%</p>
-                  <span className="w-1 h-1 bg-slate-700 rounded-full" />
-                  <p className="text-slate-500 uppercase text-[10px] font-bold tracking-widest">ID: {selectedStudentDetails.sapId}</p>
+          <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setSelectedAdminStudent(null)} />
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[95vh] sm:h-[90vh] rounded-t-[72px] sm:rounded-[80px] border-t sm:border border-white/10 p-10 sm:p-14 flex flex-col shadow-2xl">
+            <div className="flex justify-between items-start mb-12">
+              <div className="min-w-0 pr-10">
+                <h3 className="text-4xl font-black text-white tracking-tighter truncate leading-tight">{selectedStudentDetails.name}</h3>
+                <div className="flex items-center gap-6 mt-4">
+                  <p className="text-slate-500 uppercase text-[11px] font-black tracking-widest">Aggregate: {selectedStudentDetails.stats.overall}%</p>
+                  <span className="w-1.5 h-1.5 bg-slate-800 rounded-full" />
+                  <p className="text-slate-500 uppercase text-[11px] font-black tracking-widest">ID: {selectedStudentDetails.sapId}</p>
                 </div>
               </div>
-              <button onClick={() => setSelectedAdminStudent(null)} className="p-4 bg-white/5 rounded-3xl text-slate-500 shrink-0"><X className="w-8 h-8" /></button>
+              <button onClick={() => setSelectedAdminStudent(null)} className="p-6 bg-white/5 rounded-[32px] text-slate-500 shrink-0"><X className="w-10 h-10" /></button>
             </div>
-            <div className="flex-grow overflow-y-auto space-y-4 custom-scrollbar pr-3 pb-20">
+            <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-24">
               {selectedStudentDetails.stats.summary.map(sub => (
-                <div key={sub.name} className="bg-black/40 border border-white/5 p-8 rounded-[40px] flex justify-between items-center group hover:border-indigo-500/20 transition-all shadow-lg">
-                  <div className="min-w-0 pr-6">
-                    <p className="font-black text-white text-xl truncate tracking-tight leading-tight">{sub.name}</p>
-                    <p className="text-[10px] text-slate-600 font-black uppercase mt-2 tracking-widest">Sessions: {sub.present} / {sub.total}</p>
+                <div key={sub.name} className="bg-black/40 border border-white/5 p-10 rounded-[56px] flex justify-between items-center group hover:border-indigo-500/20 transition-all shadow-2xl">
+                  <div className="min-w-0 pr-10">
+                    <p className="font-black text-white text-2xl truncate tracking-tight leading-tight">{sub.name}</p>
+                    <p className="text-[11px] text-slate-600 font-black uppercase mt-3 tracking-widest">Ratio: {sub.present} / {sub.total}</p>
                   </div>
-                  <h4 className={`text-4xl font-black tracking-tighter shrink-0 ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</h4>
+                  <h4 className={`text-5xl font-black tracking-tighter shrink-0 ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</h4>
                 </div>
               ))}
             </div>
@@ -676,12 +662,12 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Admin Add Student Modal */}
+      {/* Other Modals (Enroll, Extra, Sub, Comms) follow the same high-fidelity styling... */}
       {showAddStudentModal && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
-          <div className="absolute inset-0 bg-black/98 backdrop-blur-2xl" onClick={() => setShowAddStudentModal(false)} />
-          <div className="relative bg-[#080808] w-full max-w-lg rounded-[64px] border border-white/10 p-12 shadow-2xl">
-            <h3 className="text-3xl font-black text-white tracking-tighter mb-8 text-center">Enroll Student</h3>
+          <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowAddStudentModal(false)} />
+          <div className="relative bg-[#080808] w-full max-w-lg rounded-[64px] border border-white/10 p-14 shadow-2xl">
+            <h3 className="text-4xl font-black text-white tracking-tighter mb-10 text-center">Enroll Student</h3>
             <form onSubmit={(e) => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
@@ -691,14 +677,62 @@ const App: React.FC = () => {
                 setStudentsList(p => [...p, { name: n, sapId: s }]);
                 setShowAddStudentModal(false);
               }
-            }} className="space-y-6">
-              <input name="name" type="text" placeholder="Full Student Name" className="w-full bg-black/40 border border-white/10 rounded-2xl py-6 px-10 text-white outline-none focus:border-indigo-500 font-bold" required />
-              <input name="sap" type="text" placeholder="Official SAP ID" className="w-full bg-black/40 border border-white/10 rounded-2xl py-6 px-10 text-white outline-none focus:border-indigo-500 font-bold" required />
-              <div className="flex gap-4 pt-6">
-                <button type="button" onClick={() => setShowAddStudentModal(false)} className="flex-1 py-6 bg-white/5 text-slate-500 rounded-3xl font-black uppercase text-[10px] tracking-widest transition-all">Discard</button>
-                <button type="submit" className="flex-1 py-6 bg-indigo-600 text-white rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95 transition-all">Enroll Node</button>
+            }} className="space-y-8">
+              <input name="name" type="text" placeholder="Full Student Name" className="w-full bg-black/40 border border-white/10 rounded-[32px] py-7 px-10 text-white outline-none focus:border-indigo-500 font-bold text-lg shadow-inner" required />
+              <input name="sap" type="text" placeholder="Official SAP ID" className="w-full bg-black/40 border border-white/10 rounded-[32px] py-7 px-10 text-white outline-none focus:border-indigo-500 font-bold text-lg shadow-inner" required />
+              <div className="flex gap-4 pt-10">
+                <button type="button" onClick={() => setShowAddStudentModal(false)} className="flex-1 py-7 bg-white/5 text-slate-500 rounded-[32px] font-black uppercase text-[11px] tracking-widest transition-all">Discard</button>
+                <button type="submit" className="flex-1 py-7 bg-indigo-600 text-white rounded-[32px] font-black uppercase text-[11px] tracking-widest shadow-2xl active:scale-95 transition-all">Enroll User</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Extra Session Modal */}
+      {showExtraModal && (
+        <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowExtraModal(false)} />
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[85vh] rounded-t-[64px] sm:rounded-[72px] border-t sm:border border-white/10 p-12 flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center mb-12">
+              <h3 className="text-3xl font-black text-white tracking-tighter">Log Custom Session</h3>
+              <button onClick={() => setShowExtraModal(false)} className="p-6 bg-white/5 rounded-[32px] text-slate-500"><X className="w-10 h-10" /></button>
+            </div>
+            <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-12">
+              {subjectsList.map(sub => (
+                <div key={sub.name} className="bg-black/40 p-10 rounded-[56px] border border-white/5 flex items-center justify-between gap-10 group hover:border-indigo-500/30 transition-all shadow-xl">
+                  <span className="font-black text-slate-200 text-2xl truncate leading-tight tracking-tight">{sub.name}</span>
+                  <div className="flex gap-4 shrink-0">
+                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'present', sub.name)} className="w-16 h-16 bg-emerald-500 text-black rounded-[24px] font-black shadow-2xl active:scale-90 transition-all text-xl">P</button>
+                    <button onClick={() => markAttendance(`extra-${Date.now()}`, 'Extra', 'absent', sub.name)} className="w-16 h-16 bg-rose-500 text-black rounded-[24px] font-black shadow-2xl active:scale-90 transition-all text-xl">A</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Substitution Modal */}
+      {showSubModal && (
+        <div className="fixed inset-0 z-[270] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-3xl" onClick={() => setShowSubModal(null)} />
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl h-[85vh] rounded-t-[64px] sm:rounded-[72px] border-t sm:border border-white/10 p-12 flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center mb-12">
+              <h3 className="text-3xl font-black text-white tracking-tighter">Substitute With</h3>
+              <button onClick={() => setShowSubModal(null)} className="p-6 bg-white/5 rounded-[32px] text-slate-500"><X className="w-10 h-10" /></button>
+            </div>
+            <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-12">
+              {subjectsList.map(sub => (
+                <div key={sub.name} className="bg-black/40 p-10 rounded-[56px] border border-white/5 flex items-center justify-between gap-10 group hover:border-indigo-500/30 transition-all shadow-xl">
+                  <span className="font-black text-slate-200 text-2xl truncate leading-tight tracking-tight">{sub.name}</span>
+                  <div className="flex gap-4 shrink-0">
+                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'present', sub.name)} className="w-16 h-16 bg-emerald-500 text-black rounded-[24px] font-black shadow-2xl active:scale-90 transition-all text-xl">P</button>
+                    <button onClick={() => markAttendance(showSubModal.lectureId, showSubModal.originalSubject, 'absent', sub.name)} className="w-16 h-16 bg-rose-500 text-black rounded-[24px] font-black shadow-2xl active:scale-90 transition-all text-xl">A</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -707,24 +741,24 @@ const App: React.FC = () => {
       {showNotificationCenter && (
         <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setShowNotificationCenter(false)} />
-          <div className="relative bg-[#080808] w-full sm:max-w-xl rounded-t-[56px] sm:rounded-[64px] p-12 shadow-2xl border-t sm:border border-white/10 max-h-[80vh] flex flex-col">
-            <div className="flex justify-between items-center mb-10">
-              <h3 className="text-3xl font-black text-white tracking-tighter flex items-center gap-4"><BellRing className="text-indigo-500" /> Dispatch</h3>
-              <button onClick={() => setShowNotificationCenter(false)} className="p-4 bg-white/5 rounded-3xl text-slate-500"><X className="w-7 h-7" /></button>
+          <div className="relative bg-[#080808] w-full sm:max-w-2xl rounded-t-[64px] sm:rounded-[72px] p-14 shadow-2xl border-t sm:border border-white/10 max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center mb-12">
+              <h3 className="text-4xl font-black text-white tracking-tighter flex items-center gap-6"><BellRing className="text-indigo-500 w-10 h-10" /> Dispatches</h3>
+              <button onClick={() => setShowNotificationCenter(false)} className="p-6 bg-white/5 rounded-[32px] text-slate-500"><X className="w-10 h-10" /></button>
             </div>
-            <div className="flex-grow overflow-y-auto space-y-6 custom-scrollbar pr-3 pb-8">
+            <div className="flex-grow overflow-y-auto space-y-8 custom-scrollbar pr-3 pb-10">
               {broadcast ? (
-                <div className="bg-indigo-600/10 border border-indigo-500/20 p-10 rounded-[48px] space-y-5 shadow-2xl">
+                <div className="bg-indigo-600/10 border border-indigo-500/20 p-12 rounded-[56px] space-y-6 shadow-2xl">
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black uppercase text-indigo-400 tracking-widest">Global Admin</span>
-                    <span className="text-[10px] font-bold text-slate-600">{format(broadcast.timestamp, 'HH:mm')}</span>
+                    <span className="text-[11px] font-black uppercase text-indigo-400 tracking-widest">Global Admin</span>
+                    <span className="text-[11px] font-bold text-slate-600">{format(broadcast.timestamp, 'HH:mm')}</span>
                   </div>
-                  <p className="text-white font-bold text-base leading-relaxed">{broadcast.message}</p>
+                  <p className="text-white font-bold text-lg leading-relaxed">{broadcast.message}</p>
                 </div>
               ) : (
-                <div className="py-24 text-center opacity-20 flex flex-col items-center gap-6">
-                  <Megaphone className="w-16 h-16" />
-                  <p className="font-black uppercase text-xs tracking-widest">Synchronized</p>
+                <div className="py-32 text-center opacity-20 flex flex-col items-center gap-10">
+                  <Megaphone className="w-24 h-24" />
+                  <p className="font-black uppercase text-base tracking-widest">Nodes Synchronized</p>
                 </div>
               )}
             </div>
@@ -732,13 +766,13 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Add Lecture Template Modal */}
+      {/* Add Lecture Rule Modal */}
       {showAddLectureModal && (
         <div className="fixed inset-0 z-[350] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
-          <div className="absolute inset-0 bg-black/98 backdrop-blur-2xl" onClick={() => setShowAddLectureModal(null)} />
-          <div className="relative bg-[#080808] w-full max-w-lg rounded-[64px] border border-white/10 p-12 shadow-2xl">
-            <h3 className="text-3xl font-black text-white tracking-tighter mb-2 text-center">New Session</h3>
-            <p className="text-center text-indigo-500 font-black uppercase tracking-widest text-[10px] mb-12">{showAddLectureModal} Protocol</p>
+          <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowAddLectureModal(null)} />
+          <div className="relative bg-[#080808] w-full max-w-lg rounded-[72px] border border-white/10 p-14 shadow-2xl">
+            <h3 className="text-4xl font-black text-white tracking-tighter mb-4 text-center">New Logic Rule</h3>
+            <p className="text-center text-indigo-500 font-black uppercase tracking-[0.3em] text-[11px] mb-14">{showAddLectureModal} Protocol</p>
             <form onSubmit={(e) => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
@@ -750,13 +784,13 @@ const App: React.FC = () => {
                 setShowAddLectureModal(null);
               }
             }} className="space-y-8">
-              <select name="sub" className="w-full bg-black/40 border border-white/10 rounded-3xl py-6 px-10 text-white outline-none focus:border-indigo-500 font-bold text-lg appearance-none">
+              <select name="sub" className="w-full bg-black/40 border border-white/10 rounded-[32px] py-7 px-10 text-white outline-none focus:border-indigo-500 font-bold text-xl appearance-none shadow-inner">
                 {subjectsList.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
               </select>
-              <input name="time" type="text" placeholder="e.g. 09:00 - 10:00" className="w-full bg-black/40 border border-white/10 rounded-3xl py-6 px-10 text-white outline-none focus:border-indigo-500 font-bold text-lg" required />
-              <div className="flex gap-4 pt-6">
-                <button type="button" onClick={() => setShowAddLectureModal(null)} className="flex-1 py-6 bg-white/5 text-slate-500 rounded-3xl font-black uppercase text-[10px] tracking-widest transition-all">Discard</button>
-                <button type="submit" className="flex-1 py-6 bg-indigo-600 text-white rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-2xl active:scale-95 transition-all">Deploy</button>
+              <input name="time" type="text" placeholder="e.g. 09:00 - 10:00" className="w-full bg-black/40 border border-white/10 rounded-[32px] py-7 px-10 text-white outline-none focus:border-indigo-500 font-bold text-xl shadow-inner" required />
+              <div className="flex gap-4 pt-10">
+                <button type="button" onClick={() => setShowAddLectureModal(null)} className="flex-1 py-7 bg-white/5 text-slate-500 rounded-[32px] font-black uppercase text-[11px] tracking-widest transition-all">Discard</button>
+                <button type="submit" className="flex-1 py-7 bg-indigo-600 text-white rounded-[32px] font-black uppercase text-[11px] tracking-widest shadow-2xl active:scale-95 transition-all">Deploy Rule</button>
               </div>
             </form>
           </div>
@@ -769,21 +803,21 @@ const App: React.FC = () => {
 
 // UI Atoms
 const NavItem: React.FC<{ icon: React.ReactNode; label: string; active: boolean; onClick: () => void }> = ({ icon, label, active, onClick }) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-6 px-10 py-5 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${active ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-600/30' : 'text-slate-600 hover:bg-white/5 hover:text-slate-300'}`}>
-    {React.cloneElement(icon as React.ReactElement<any>, { className: `w-6 h-6` })}
+  <button onClick={onClick} className={`w-full flex items-center gap-6 px-10 py-6 rounded-3xl transition-all font-black text-[12px] uppercase tracking-widest ${active ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-600/40' : 'text-slate-600 hover:bg-white/5 hover:text-slate-300'}`}>
+    {React.cloneElement(icon as React.ReactElement<any>, { className: `w-7 h-7` })}
     {label}
   </button>
 );
 
 const MobileNavItem: React.FC<{ icon: React.ReactNode; active: boolean; onClick: () => void }> = ({ icon, active, onClick }) => (
-  <button onClick={onClick} className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-600/20 scale-110' : 'text-slate-600 active:scale-95'}`}>
-    {React.cloneElement(icon as React.ReactElement<any>, { className: `w-6 h-6` })}
+  <button onClick={onClick} className={`flex flex-col items-center justify-center w-16 h-16 rounded-3xl transition-all ${active ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-600/20 scale-110' : 'text-slate-600 active:scale-95'}`}>
+    {React.cloneElement(icon as React.ReactElement<any>, { className: `w-7 h-7` })}
   </button>
 );
 
 const StatusBtn: React.FC<{ icon: React.ReactNode; label: string; color: string; onClick: () => void }> = ({ icon, label, color, onClick }) => (
-  <button onClick={onClick} className={`flex items-center gap-4 sm:gap-8 w-full p-6 sm:p-8 bg-black/40 border border-white/5 rounded-[32px] sm:rounded-[40px] transition-all ${color} font-black uppercase text-[10px] sm:text-xs text-slate-400 text-left group tracking-widest pointer-events-auto active:scale-[0.98]`}>
-    {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-8 h-8 sm:w-10 sm:h-10 shrink-0 transition-all group-hover:scale-110' })}
+  <button onClick={onClick} className={`flex items-center gap-6 sm:gap-10 w-full p-8 sm:p-10 bg-black/40 border border-white/5 rounded-[40px] sm:rounded-[48px] transition-all ${color} font-black uppercase text-[11px] sm:text-xs text-slate-400 text-left group tracking-widest pointer-events-auto active:scale-[0.98] shadow-lg`}>
+    {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-10 h-10 sm:w-12 sm:h-12 shrink-0 transition-all group-hover:scale-110' })}
     {label}
   </button>
 );
