@@ -2,17 +2,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  Cell, LineChart, Line, AreaChart, Area
+  Cell
 } from 'recharts';
 import { 
   Calendar, CheckCircle, XCircle, Clock, BookOpen, BarChart2, 
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
   RefreshCcw, X, Plus, LogOut, ShieldCheck, Database, Trash2, Settings, 
   UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, 
-  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet, MessageSquare, Bot, Wand2
+  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet
 } from 'lucide-react';
 import { format, addDays, subDays, startOfToday, parseISO, isValid } from 'date-fns';
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import * as XLSX from 'xlsx';
 import { FULL_SCHEDULE, SUBJECTS, AUTHORIZED_STUDENTS, DEFAULT_PASSWORD, ADMIN_SAP_ID, DAYS } from './constants';
 import { AttendanceRecord, AttendanceStatus, DayOfWeek, User, Lecture, Subject } from './types';
@@ -36,14 +36,6 @@ const App: React.FC = () => {
   const [parseProgress, setParseProgress] = useState(0);
   const [copySuccess, setCopySuccess] = useState(false);
   
-  // Chat State
-  const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<{role: 'user' | 'assistant', text: string}[]>([
-    { role: 'assistant', text: 'Hey! I am your AI Counselor. Ask me things like "How many lectures can I miss in Marketing?" or "What is my current progress?"' }
-  ]);
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
   // Modals & Inputs
   const [showStatusModal, setShowStatusModal] = useState<{lectureId: string, subject: string, substitutingSubject?: string | null} | null>(null);
   const [syncKeyInput, setSyncKeyInput] = useState('');
@@ -62,11 +54,6 @@ const App: React.FC = () => {
       return "Invalid Date";
     }
   };
-
-  // Scroll chat to bottom
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
 
   // Load User Records
   useEffect(() => {
@@ -114,63 +101,19 @@ const App: React.FC = () => {
     return { summary, overall, totalP, totalT };
   }, [records, subjectsList]);
 
-  // AI Chat Handler
-  const handleSendMessage = async () => {
-    if (!chatInput.trim() || isChatLoading) return;
-
-    const userMsg = chatInput.trim();
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setChatInput('');
-    setIsChatLoading(true);
-
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const context = `You are an AI Attendance Counselor for an NMIMS student. 
-      Student Name: ${currentUser?.name}.
-      Current Stats: Overall Attendance: ${stats.overall}%. Total Present: ${stats.totalP}, Total Absent: ${stats.totalT - stats.totalP}.
-      Subject Details: ${stats.summary.map(s => `${s.name}: ${s.percentage}% (${s.present}/${s.total}, Credits: ${s.credits})`).join(', ')}.
-      Help the student with skipping strategies (to stay above 75%), summaries, and motivation. 
-      Respond concisely and professionally with a helpful tone.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: userMsg,
-        config: { systemInstruction: context }
-      });
-
-      setChatMessages(prev => [...prev, { role: 'assistant', text: response.text || "I'm sorry, I couldn't process that. Try again!" }]);
-    } catch (e) {
-      setChatMessages(prev => [...prev, { role: 'assistant', text: "Error connecting to Counselor Node." }]);
-    } finally {
-      setIsChatLoading(false);
-    }
-  };
-
-  // Sync Hub
+  // Added generateSyncKey to handle identity persistence and fix missing name errors
   const generateSyncKey = () => {
     if (!currentUser) return '';
-    const data = { user: currentUser, records: records, ts: Date.now() };
-    return btoa(JSON.stringify(data));
-  };
-
-  const handleImportSyncKey = () => {
     try {
-      const decoded = JSON.parse(atob(syncKeyInput));
-      if (decoded.user && decoded.records) {
-        setRecords(decoded.records);
-        setCurrentUser(decoded.user);
-        localStorage.setItem('nmims_session_user', JSON.stringify(decoded.user));
-        localStorage.setItem(`nmims_v3_db_${decoded.user.sapId}`, JSON.stringify(decoded.records));
-        alert('Sync Successful!');
-        setActiveTab('dashboard');
-        setSyncKeyInput('');
-      }
+      const payload = { user: currentUser, records };
+      return btoa(JSON.stringify(payload));
     } catch (e) {
-      alert('Invalid Sync Key.');
+      console.error('Failed to generate sync key', e);
+      return '';
     }
   };
 
-  // Handle Excel Upload (Handles NMIMS or Generic Normal Excel)
+  // Handle Excel Upload (Handles any normal Excel structure)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentUser) return;
@@ -187,6 +130,7 @@ const App: React.FC = () => {
             const workbook = XLSX.read(data, { type: 'array' });
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
+            // header: 1 returns array of arrays (perfect for messy sheets)
             resolve(XLSX.utils.sheet_to_json(worksheet, { header: 1 }));
           } catch (err) {
             reject(err);
@@ -197,25 +141,31 @@ const App: React.FC = () => {
       });
 
       setParseProgress(40);
-
-      if (!excelData || excelData.length === 0) throw new Error("File empty");
+      if (!excelData || excelData.length === 0) throw new Error("Empty spreadsheet");
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // We send a text-based representation of the grid to Gemini
-      const gridText = excelData.slice(0, 150).map(row => row.join('|')).join('\n');
+      // Map to string for AI context
+      const gridText = excelData
+        .filter(row => row.some((cell: any) => cell !== null && cell !== ''))
+        .slice(0, 200) // Keep first 200 rows to stay within context
+        .map(row => row.join('|'))
+        .join('\n');
       
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze this attendance spreadsheet grid. It could be an official NMIMS report or a simple normal table.
-        Grid Data:
+        contents: `Analyze this spreadsheet grid text. It could be an official NMIMS report or any normal attendance table.
+        Official Subjects: ${subjectsList.map(s => s.name).join(', ')}.
+        
+        Data:
         ${gridText}
         
-        Extract records and map them to these official subjects: ${subjectsList.map(s => s.name).join(', ')}.
-        Mapping Rules:
-        1. Find columns representing Date, Subject Name, and Status (P/A/Present/Absent).
-        2. Status 'P'/'Present' -> 'present', 'A'/'Absent' -> 'absent'.
-        3. Extract Date as YYYY-MM-DD.
-        4. Return a JSON array of objects {subject, status, date}.`,
+        Goal: 
+        Extract a list of attendance records. 
+        1. Identify the Date, Subject Name, and Status columns.
+        2. Map whatever subject names found in the sheet to the closest match in our Official Subjects list.
+        3. Convert statuses: 'P' or 'Present' or similar -> 'present', 'A' or 'Absent' or similar -> 'absent'.
+        4. Dates must be YYYY-MM-DD.
+        5. Return ONLY a valid JSON array of objects with keys: "subject", "status", "date".`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -248,6 +198,8 @@ const App: React.FC = () => {
                   item.status.toLowerCase().startsWith('a') ? 'absent' : 'cancelled'
         }));
 
+      if (newBatch.length === 0) throw new Error("No records extracted");
+
       setRecords(prev => {
         const updated = [...prev];
         newBatch.forEach(nb => {
@@ -260,7 +212,7 @@ const App: React.FC = () => {
       setTimeout(() => setIsParsingExcel(false), 500);
     } catch (err) {
       setIsParsingExcel(false);
-      alert('Error parsing Excel. Try a simpler layout or NMIMS official format.');
+      alert('Excel parse failed. Please ensure the file has clear headers for Date, Subject, and Status.');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -281,6 +233,23 @@ const App: React.FC = () => {
     setShowStatusModal(null);
   };
 
+  const handleImportSyncKey = () => {
+    try {
+      const decoded = JSON.parse(atob(syncKeyInput));
+      if (decoded.user && decoded.records) {
+        setRecords(decoded.records);
+        setCurrentUser(decoded.user);
+        localStorage.setItem('nmims_session_user', JSON.stringify(decoded.user));
+        localStorage.setItem(`nmims_v3_db_${decoded.user.sapId}`, JSON.stringify(decoded.records));
+        alert('Sync Successful!');
+        setActiveTab('dashboard');
+        setSyncKeyInput('');
+      }
+    } catch (e) {
+      alert('Invalid Sync Key.');
+    }
+  };
+
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
@@ -297,7 +266,7 @@ const App: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 text-white">
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 text-white overflow-hidden">
         <div className="w-full max-w-sm space-y-10 animate-in fade-in zoom-in-95 duration-700">
           <div className="text-center">
             <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white font-black text-4xl mx-auto mb-8 shadow-2xl relative z-10">NM</div>
@@ -355,7 +324,7 @@ const App: React.FC = () => {
                 <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/5 blur-[120px] rounded-full -mr-64 -mt-64" />
                 <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-10">
                   <div className="text-center md:text-left">
-                    <span className="bg-white/20 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white backdrop-blur-md mb-6 inline-block">Attendance Matrix</span>
+                    <span className="bg-white/20 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white backdrop-blur-md mb-6 inline-block">Attendance Integrity Matrix</span>
                     <h1 className="text-5xl sm:text-7xl font-black text-white tracking-tighter leading-none mb-6">Status<br/>Portal</h1>
                     <div className="flex gap-4 items-center justify-center md:justify-start">
                       <div className="px-5 py-2.5 bg-black/30 rounded-2xl border border-white/10 flex items-center gap-3">
@@ -377,86 +346,42 @@ const App: React.FC = () => {
                 </div>
               </header>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                <section className="lg:col-span-2 bg-slate-900/20 p-8 rounded-[48px] border border-white/5 shadow-2xl space-y-8 h-full">
-                  <div className="flex items-center justify-between px-2">
-                    <h2 className="text-2xl font-black text-white flex items-center gap-4"><BarChart2 className="w-8 h-8 text-indigo-500" /> Module Integrity</h2>
-                  </div>
-                  <div className="h-[400px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stats.summary} layout="vertical">
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={false} />
-                        <XAxis type="number" domain={[0, 100]} hide />
-                        <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={9} width={100} tick={{fill: '#94a3b8', fontWeight: 'bold'}} />
-                        <Tooltip 
-                          cursor={{fill: 'rgba(99, 102, 241, 0.05)'}}
-                          contentStyle={{ backgroundColor: '#0f172a', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }} 
-                        />
-                        <Bar dataKey="percentage" radius={[0, 8, 8, 0]} barSize={24}>
-                          {stats.summary.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.percentage >= 75 ? '#10b981' : '#f43f5e'} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </section>
-
-                {/* AI Chat (The "Chats" on Home Page) */}
-                <section className="bg-slate-900/30 p-8 rounded-[48px] border border-white/5 shadow-2xl space-y-6 flex flex-col h-[520px]">
-                  <div className="flex items-center gap-4 px-2">
-                    <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg"><Bot className="w-6 h-6" /></div>
-                    <div>
-                      <h2 className="text-xl font-black text-white">Counselor Node</h2>
-                      <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">AI Insights active</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex-grow overflow-y-auto custom-scrollbar px-2 space-y-4">
-                    {chatMessages.map((msg, i) => (
-                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] p-4 rounded-3xl text-xs font-bold leading-relaxed shadow-lg ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-black/60 text-slate-300 border border-white/10 rounded-tl-none'}`}>
-                          {msg.text}
-                        </div>
-                      </div>
-                    ))}
-                    {isChatLoading && (
-                      <div className="flex justify-start">
-                         <div className="bg-black/60 p-4 rounded-3xl text-xs border border-white/10 animate-pulse text-slate-500">Processing Node...</div>
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  <div className="flex gap-2 bg-black/40 p-2 rounded-3xl border border-white/10">
-                    <input 
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Ask the Counselor..." 
-                      className="bg-transparent border-none outline-none flex-grow text-xs font-bold px-4 py-3 placeholder:text-slate-700"
-                    />
-                    <button 
-                      onClick={handleSendMessage}
-                      disabled={isChatLoading}
-                      className="p-3 bg-indigo-600 text-white rounded-2xl shadow-lg active:scale-95 transition-all disabled:opacity-50"
-                    >
-                      <Send className="w-5 h-5" />
-                    </button>
-                  </div>
-                </section>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard icon={<CheckCircle className="text-emerald-400" />} label="Present" value={stats.totalP} />
-                <StatCard icon={<Zap className="text-yellow-400" />} label="Total Credits" value={subjectsList.reduce((a, b) => a + b.credits, 0)} />
-                <StatCard icon={<Target className="text-indigo-400" />} label="Overall" value={`${stats.overall}%`} />
-                <StatCard icon={<AreaChart className="text-slate-400" />} label="Status" value={stats.overall >= 75 ? 'Safe' : 'Danger'} />
-              </div>
-
-              <section className="space-y-8">
+              <section className="bg-slate-900/20 p-8 sm:p-12 rounded-[56px] border border-white/5 shadow-2xl space-y-10">
                 <div className="flex items-center justify-between px-2">
-                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><Sparkles className="w-8 h-8 text-indigo-500" /> Module Health</h2>
+                  <h2 className="text-3xl font-black text-white flex items-center gap-4"><BarChart2 className="w-10 h-10 text-indigo-500" /> Module Integrity</h2>
+                  <div className="text-[10px] font-black uppercase text-slate-500 tracking-widest hidden sm:block">Subject Analysis</div>
+                </div>
+                <div className="h-[400px] sm:h-[450px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.summary} layout="vertical" margin={{ left: 20, right: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={false} />
+                      <XAxis type="number" domain={[0, 100]} hide />
+                      <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={120} tick={{fill: '#94a3b8', fontWeight: 'bold'}} />
+                      <Tooltip 
+                        cursor={{fill: 'rgba(99, 102, 241, 0.05)'}}
+                        contentStyle={{ backgroundColor: '#0f172a', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }} 
+                        itemStyle={{ color: '#818cf8', fontWeight: '900', fontSize: '12px' }}
+                      />
+                      <Bar dataKey="percentage" radius={[0, 12, 12, 0]} barSize={28}>
+                        {stats.summary.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.percentage >= 75 ? '#10b981' : '#f43f5e'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+                <StatCard icon={<CheckCircle className="text-emerald-400" />} label="Present Nodes" value={stats.totalP} />
+                <StatCard icon={<Zap className="text-yellow-400" />} label="Total Credits" value={subjectsList.reduce((a, b) => a + b.credits, 0)} />
+                <StatCard icon={<Target className="text-indigo-400" />} label="Overall Matrix" value={`${stats.overall}%`} />
+                <StatCard icon={<Database className="text-slate-400" />} label="Node Type" value="Local Vault" />
+              </div>
+
+              <section className="space-y-10">
+                <div className="flex items-center justify-between px-2">
+                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><Sparkles className="w-8 h-8 text-indigo-500" /> Subject Health</h2>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                   {stats.summary.map(sub => (
@@ -473,12 +398,12 @@ const App: React.FC = () => {
                       </div>
                       <div className="mt-auto space-y-5 relative z-10">
                         <div className="flex justify-between items-end text-[10px] font-black uppercase tracking-widest text-slate-500">
-                          <span>Usage: {sub.present} / {sub.total} nodes</span>
-                          <span className="text-white">{sub.percentage}% SYNC</span>
+                          <span>Nodes: {sub.present} / {sub.total}</span>
+                          <span className="text-white">STATUS: {sub.percentage >= 75 ? 'OPTIMAL' : 'BELOW SYNC'}</span>
                         </div>
                         <div className="h-4 bg-black/60 rounded-full overflow-hidden border border-white/5 p-1">
                           <div 
-                            className={`h-full transition-all duration-1000 rounded-full ${sub.percentage >= 75 ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'}`} 
+                            className={`h-full transition-all duration-1000 rounded-full ${sub.percentage >= 75 ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.3)]'}`} 
                             style={{ width: `${Math.min(sub.percentage, 100)}%` }} 
                           />
                         </div>
@@ -494,12 +419,12 @@ const App: React.FC = () => {
             <div className="space-y-12 animate-in fade-in duration-500">
               <header className="p-10 bg-slate-900/30 rounded-[48px] border border-white/5">
                 <h1 className="text-5xl font-black tracking-tighter">Sync Hub</h1>
-                <p className="text-slate-500 text-sm font-bold uppercase tracking-widest mt-4">Cross-Device Identity Nodes</p>
+                <p className="text-slate-500 text-sm font-bold uppercase tracking-widest mt-4">Identity Persistence</p>
               </header>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="bg-indigo-600/5 border border-indigo-500/20 p-12 rounded-[56px] space-y-8 shadow-2xl">
                   <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><Share2 className="w-8 h-8" /></div>
-                  <div><h3 className="text-3xl font-black mb-2">Export Data</h3><p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Identity Key Node</p></div>
+                  <div><h3 className="text-3xl font-black mb-2">Export Data</h3><p className="text-slate-400 text-sm">Transfer your attendance nodes to another device.</p></div>
                   <div className="relative group">
                     <div className="bg-black/60 p-8 rounded-3xl text-[9px] font-mono text-indigo-300 break-all h-40 overflow-y-auto custom-scrollbar border border-white/5 shadow-inner">{generateSyncKey()}</div>
                     <button onClick={() => { navigator.clipboard.writeText(generateSyncKey()); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }} className="absolute top-4 right-4 p-4 bg-indigo-600 text-white rounded-2xl shadow-2xl transition-all active:scale-95">{copySuccess ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}</button>
@@ -507,9 +432,9 @@ const App: React.FC = () => {
                 </div>
                 <div className="bg-slate-900/40 border border-white/5 p-12 rounded-[56px] space-y-8 shadow-2xl">
                   <div className="w-16 h-16 bg-emerald-600/20 rounded-2xl flex items-center justify-center text-emerald-400"><Download className="w-8 h-8" /></div>
-                  <div><h3 className="text-3xl font-black mb-2">Import Data</h3><p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Restore Identity</p></div>
-                  <textarea value={syncKeyInput} onChange={(e) => setSyncKeyInput(e.target.value)} placeholder="Paste Key Node..." className="w-full h-40 bg-black/40 border border-white/10 rounded-3xl p-8 text-[10px] font-mono text-indigo-300 outline-none focus:border-indigo-500 no-scrollbar" />
-                  <button onClick={handleImportSyncKey} className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] shadow-xl transition-all active:scale-95">Restore Link</button>
+                  <div><h3 className="text-3xl font-black mb-2">Import Data</h3><p className="text-slate-400 text-sm">Restore your attendance matrix using a key.</p></div>
+                  <textarea value={syncKeyInput} onChange={(e) => setSyncKeyInput(e.target.value)} placeholder="Paste Key Node..." className="w-full h-40 bg-black/40 border border-white/10 rounded-3xl p-8 text-[10px] font-mono text-indigo-300 outline-none focus:border-indigo-500 no-scrollbar transition-all" />
+                  <button onClick={handleImportSyncKey} className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] shadow-xl transition-all active:scale-95">Link Identity</button>
                 </div>
               </div>
             </div>
@@ -568,20 +493,20 @@ const App: React.FC = () => {
             <div className="space-y-10 animate-in fade-in duration-500">
                <header className="flex flex-col lg:flex-row justify-between items-center bg-slate-900/30 p-12 rounded-[56px] border border-white/5 gap-8">
                  <div className="text-center lg:text-left">
-                   <h2 className="text-5xl font-black text-white tracking-tighter">History</h2>
-                   <p className="text-slate-500 text-[11px] font-black uppercase mt-3 tracking-[0.2em]">{records.length} Processed Record Nodes</p>
+                   <h2 className="text-5xl font-black text-white tracking-tighter">Logs</h2>
+                   <p className="text-slate-500 text-[11px] font-black uppercase mt-3 tracking-[0.2em]">{records.length} Processed Attendance Nodes</p>
                  </div>
                  <div className="flex gap-4 w-full lg:w-auto">
                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx, .xls, .csv" className="hidden" />
                    <button onClick={() => fileInputRef.current?.click()} disabled={isParsingExcel} className="flex-1 lg:flex-none px-10 py-5 bg-indigo-600 text-white rounded-[24px] font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-4 shadow-2xl active:scale-95 disabled:opacity-50 transition-all">
                      {isParsingExcel ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileSpreadsheet className="w-5 h-5" />}
-                     {isParsingExcel ? 'Syncing Excel...' : 'Sync Excel Node'}
+                     {isParsingExcel ? 'Syncing...' : 'Sync Excel Node'}
                    </button>
                  </div>
                </header>
                <div className="space-y-8">
                  {records.length === 0 ? (
-                   <div className="py-40 text-center opacity-20 font-black uppercase tracking-[0.4em] text-xs">No Nodes Recorded</div>
+                   <div className="py-40 text-center opacity-20 font-black uppercase tracking-[0.4em] text-xs">No Node History Found</div>
                  ) : (
                    (Object.entries(records.reduce((acc, curr) => {
                      if (!acc[curr.date]) acc[curr.date] = [];
@@ -603,7 +528,7 @@ const App: React.FC = () => {
                                  {r.actualSubjectName !== r.originalSubjectName && <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest border border-indigo-400/20 px-2 rounded-md">Substituted</span>}
                                </div>
                              </div>
-                             <button onClick={() => setRecords(prev => prev.filter(x => x.id !== r.id))} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500 hover:text-white active:scale-95"><Trash2 className="w-5 h-5" /></button>
+                             <button onClick={() => setRecords(prev => prev.filter(x => x.id !== r.id))} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl opacity-0 group-hover:opacity-100 transition-all active:scale-95"><Trash2 className="w-5 h-5" /></button>
                            </div>
                          ))}
                        </div>
@@ -617,8 +542,8 @@ const App: React.FC = () => {
           {activeTab === 'subjects' && (
             <div className="space-y-12 animate-in fade-in duration-500">
               <header>
-                <h1 className="text-6xl font-black tracking-tighter">Matrix Nodes</h1>
-                <p className="text-slate-500 text-xs font-black uppercase tracking-[0.3em] mt-4">Module Integrity Breakdown</p>
+                <h1 className="text-6xl font-black tracking-tighter">Matrix Breakdown</h1>
+                <p className="text-slate-500 text-xs font-black uppercase tracking-[0.3em] mt-4">Node Integrity Metrics</p>
               </header>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {stats.summary.map(sub => (
@@ -628,8 +553,8 @@ const App: React.FC = () => {
                         <h4 className="font-black text-3xl text-white tracking-tighter truncate mb-3 group-hover:text-indigo-400 transition-colors">{sub.name}</h4>
                         <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest">{sub.faculty}</p>
                       </div>
-                      <div className="p-4 bg-indigo-600/10 rounded-2xl text-indigo-500 text-center flex flex-col items-center shadow-lg border border-indigo-500/20">
-                        <Zap className="w-8 h-8" />
+                      <div className="p-4 bg-indigo-600/10 rounded-2xl text-indigo-500 text-center flex flex-col items-center border border-indigo-500/20">
+                        <Calculator className="w-8 h-8" />
                         <span className="text-[8px] font-black mt-1 uppercase tracking-widest">{sub.credits} CREDITS</span>
                       </div>
                     </div>
@@ -639,13 +564,13 @@ const App: React.FC = () => {
                          <p className={`text-7xl font-black tracking-tighter ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</p>
                        </div>
                        <div className="text-right">
-                         <p className="text-slate-600 text-[10px] font-black uppercase tracking-widest mb-3">Nodes</p>
+                         <p className="text-slate-600 text-[10px] font-black uppercase tracking-widest mb-3">Sync Nodes</p>
                          <p className="text-3xl font-black text-white">{sub.present} / {sub.total}</p>
                        </div>
                     </div>
                     <div className={`p-8 rounded-[40px] border transition-all ${sub.percentage < 75 ? 'bg-rose-500/5 border-rose-500/10 text-rose-300' : 'bg-emerald-500/5 border-emerald-500/10 text-emerald-300'}`}>
-                      <p className="text-[9px] font-black uppercase mb-3 opacity-60 tracking-[0.1em]">AI Projection</p>
-                      <p className="font-black text-sm uppercase tracking-wide leading-relaxed">{sub.percentage < 75 ? `Warning: Reach 75% in next ${sub.needed} nodes.` : 'Optimal. Node matrix stable.'}</p>
+                      <p className="text-[9px] font-black uppercase mb-3 opacity-60 tracking-[0.1em]">Target Analysis</p>
+                      <p className="font-black text-sm uppercase tracking-wide leading-relaxed">{sub.percentage < 75 ? `Warning: Reach 75% in next ${sub.needed} nodes.` : 'Optimal. Matrix sync stable.'}</p>
                     </div>
                   </div>
                 ))}
@@ -669,8 +594,8 @@ const App: React.FC = () => {
            <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white mb-10 shadow-[0_0_80px_rgba(79,70,229,0.4)] animate-pulse">
               <Cpu className="w-12 h-12" />
            </div>
-           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Data Sync</h2>
-           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Reading Excel matrix nodes and mapping subjects...</p>
+           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Excel Sync</h2>
+           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Processing grid nodes and mapping matrix...</p>
            <div className="w-full max-w-sm h-4 bg-white/5 rounded-full border border-white/10 p-1 relative overflow-hidden">
               <div 
                 className="h-full bg-indigo-600 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.5)]"
@@ -693,7 +618,7 @@ const App: React.FC = () => {
                   {showStatusModal.substitutingSubject ? `Substitution: ${showStatusModal.substitutingSubject}` : `Scheduled: ${showStatusModal.subject}`}
                 </p>
               </div>
-              <button onClick={() => setShowStatusModal(null)} className="p-5 bg-white/5 rounded-2xl text-slate-600 hover:text-white transition-all"><X className="w-8 h-8" /></button>
+              <button onClick={() => setShowStatusModal(null)} className="p-5 bg-white/5 rounded-2xl text-slate-600 hover:text-white transition-all active:scale-95"><X className="w-8 h-8" /></button>
             </div>
 
             {!showStatusModal.substitutingSubject ? (
