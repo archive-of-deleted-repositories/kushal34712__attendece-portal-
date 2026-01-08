@@ -47,7 +47,6 @@ const App: React.FC = () => {
   // Safe Date Formatting Utility
   const safeFormat = (dateStr: string, formatStr: string) => {
     try {
-      // Handle both ISO strings and potential Date objects
       const d = new Date(dateStr);
       if (!isValid(d)) return "Invalid Date";
       return format(d, formatStr);
@@ -102,7 +101,6 @@ const App: React.FC = () => {
     return { summary, overall, totalP, totalT };
   }, [records, subjectsList]);
 
-  // Added generateSyncKey to handle identity persistence and fix missing name errors
   const generateSyncKey = () => {
     if (!currentUser) return '';
     try {
@@ -114,7 +112,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Handle Excel Upload (Handles any normal Excel structure)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentUser) return;
@@ -128,7 +125,6 @@ const App: React.FC = () => {
         reader.onload = (e) => {
           try {
             const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            // Enable cellDates to handle native Excel date types
             const workbook = XLSX.read(data, { type: 'array', cellDates: true });
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
@@ -145,10 +141,9 @@ const App: React.FC = () => {
       if (!excelData || excelData.length === 0) throw new Error("Empty spreadsheet");
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Map to string for AI context, sanitizing values
       const gridText = excelData
         .filter(row => row.some((cell: any) => cell !== null && cell !== ''))
-        .slice(0, 300) // Increased limit for larger reports
+        .slice(0, 300)
         .map(row => row.map(cell => {
           if (cell instanceof Date) return format(cell, 'MMM d yyyy');
           return String(cell);
@@ -166,7 +161,7 @@ const App: React.FC = () => {
         Instruction:
         1. Locate columns for Date, Subject, and Status (P/A).
         2. Recognize dates like "Dec 8 2025", "Dec 08 2025", or "12/08/2025".
-        3. Map messy subject names (e.g., "Adv. Excel" or "Principles of Marketing") to their EXACT counterpart in the Official Subjects list provided above.
+        3. Map messy subject names to their EXACT counterpart in the Official Subjects list.
         4. Normalize Status: 'P', 'Present', '1' -> 'present' | 'A', 'Absent', '0' -> 'absent'.
         5. Return ONLY a JSON array: [{"subject": "Exact Name", "status": "present/absent", "date": "YYYY-MM-DD"}].`,
         config: {
@@ -187,7 +182,6 @@ const App: React.FC = () => {
       });
 
       setParseProgress(85);
-
       const extracted = JSON.parse(response.text || '[]');
       const newBatch: AttendanceRecord[] = extracted
         .map((item: any) => {
@@ -217,8 +211,7 @@ const App: React.FC = () => {
       setTimeout(() => setIsParsingExcel(false), 500);
     } catch (err) {
       setIsParsingExcel(false);
-      console.error(err);
-      alert('Excel Sync Failed. Please ensure your columns have headers like "Date", "Subject", and "Status".');
+      alert('Excel Sync Failed. Ensure your columns have headers like "Date", "Subject", and "Status".');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -237,6 +230,31 @@ const App: React.FC = () => {
       }];
     });
     setShowStatusModal(null);
+  };
+
+  const markAllPresent = () => {
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    const todayLectures = timetable.filter(l => l.day === format(selectedDate, 'EEEE'));
+    
+    setRecords(prev => {
+      const updated = [...prev];
+      todayLectures.forEach(lecture => {
+        const id = `${dateStr}-${lecture.id}`;
+        const existingIndex = updated.findIndex(r => r.id === id);
+        const record = {
+          id, date: dateStr, lectureId: lecture.id,
+          originalSubjectName: lecture.subject,
+          actualSubjectName: lecture.subject,
+          status: 'present' as const
+        };
+        if (existingIndex > -1) {
+          updated[existingIndex] = record;
+        } else {
+          updated.push(record);
+        }
+      });
+      return updated;
+    });
   };
 
   const handleImportSyncKey = () => {
@@ -291,7 +309,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#050505] text-slate-100 flex flex-col md:flex-row font-sans">
-      {/* Sidebar */}
       <aside className="hidden md:flex flex-col w-72 lg:w-80 bg-[#080808] border-r border-white/5 p-10 sticky top-0 h-screen z-50">
         <div className="flex items-center gap-4 mb-16">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black">NM</div>
@@ -312,9 +329,7 @@ const App: React.FC = () => {
         </button>
       </aside>
 
-      {/* Main Container */}
       <main className="flex-grow overflow-y-auto pb-32 md:pb-12 custom-scrollbar">
-        {/* Mobile Header */}
         <div className="md:hidden flex items-center justify-between p-6 bg-[#080808]/90 backdrop-blur-3xl sticky top-0 z-[60] border-b border-white/5">
           <div className="flex items-center gap-3">
              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-[10px]">NM</div>
@@ -359,16 +374,24 @@ const App: React.FC = () => {
                 </div>
                 <div className="h-[400px] sm:h-[450px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stats.summary} layout="vertical" margin={{ left: 20, right: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={false} />
-                      <XAxis type="number" domain={[0, 100]} hide />
-                      <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={120} tick={{fill: '#94a3b8', fontWeight: 'bold'}} />
+                    <BarChart data={stats.summary} layout="horizontal" margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis 
+                        dataKey="name" 
+                        stroke="#64748b" 
+                        fontSize={10} 
+                        tick={{fill: '#94a3b8', fontWeight: 'bold'}}
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                      />
+                      <YAxis type="number" domain={[0, 100]} hide />
                       <Tooltip 
                         cursor={{fill: 'rgba(99, 102, 241, 0.05)'}}
                         contentStyle={{ backgroundColor: '#0f172a', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }} 
                         itemStyle={{ color: '#818cf8', fontWeight: '900', fontSize: '12px' }}
                       />
-                      <Bar dataKey="percentage" radius={[0, 12, 12, 0]} barSize={28}>
+                      <Bar dataKey="percentage" radius={[12, 12, 0, 0]} barSize={40}>
                         {stats.summary.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.percentage >= 75 ? '#10b981' : '#f43f5e'} />
                         ))}
@@ -384,40 +407,6 @@ const App: React.FC = () => {
                 <StatCard icon={<Target className="text-indigo-400" />} label="Overall Matrix" value={`${stats.overall}%`} />
                 <StatCard icon={<Database className="text-slate-400" />} label="Node Type" value="Local Vault" />
               </div>
-
-              <section className="space-y-10">
-                <div className="flex items-center justify-between px-2">
-                  <h2 className="text-2xl font-black text-white flex items-center gap-4"><Sparkles className="w-8 h-8 text-indigo-500" /> Subject Health</h2>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {stats.summary.map(sub => (
-                    <div key={sub.name} className="bg-[#0d0d0d] p-10 rounded-[48px] border border-white/5 hover:border-indigo-500/30 transition-all flex flex-col h-72 shadow-2xl group hover:-translate-y-2 relative overflow-hidden">
-                      <div className="flex justify-between items-start mb-10 relative z-10">
-                        <div className="min-w-0 pr-4">
-                          <h4 className="font-black text-white text-xl leading-tight truncate group-hover:text-indigo-400 transition-colors">{sub.name}</h4>
-                          <p className="text-[9px] text-slate-600 font-black uppercase mt-2 tracking-widest">{sub.faculty}</p>
-                        </div>
-                        <div className="text-right">
-                          <div className={`text-3xl font-black ${sub.percentage >= 75 ? 'text-emerald-400' : 'text-rose-400'}`}>{sub.percentage}%</div>
-                          <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1">{sub.credits} Credits</div>
-                        </div>
-                      </div>
-                      <div className="mt-auto space-y-5 relative z-10">
-                        <div className="flex justify-between items-end text-[10px] font-black uppercase tracking-widest text-slate-500">
-                          <span>Nodes: {sub.present} / {sub.total}</span>
-                          <span className="text-white">STATUS: {sub.percentage >= 75 ? 'OPTIMAL' : 'BELOW SYNC'}</span>
-                        </div>
-                        <div className="h-4 bg-black/60 rounded-full overflow-hidden border border-white/5 p-1">
-                          <div 
-                            className={`h-full transition-all duration-1000 rounded-full ${sub.percentage >= 75 ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.3)]'}`} 
-                            style={{ width: `${Math.min(sub.percentage, 100)}%` }} 
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
             </div>
           )}
 
@@ -448,13 +437,23 @@ const App: React.FC = () => {
 
           {activeTab === 'schedule' && (
             <div className="space-y-10 animate-in fade-in duration-500">
-               <header className="flex items-center justify-between bg-slate-900/40 p-10 rounded-[48px] border border-white/5 shadow-xl">
-                 <button onClick={() => setSelectedDate(subDays(selectedDate, 1))} className="p-5 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronLeft className="w-8 h-8" /></button>
-                 <div className="text-center">
-                   <h2 className="text-4xl font-black text-white tracking-tighter">{format(selectedDate, 'EEEE')}</h2>
-                   <p className="text-xs text-slate-500 uppercase font-black mt-2 tracking-[0.2em]">{format(selectedDate, 'MMMM do, yyyy')}</p>
+               <header className="flex flex-col sm:flex-row items-center justify-between bg-slate-900/40 p-10 rounded-[48px] border border-white/5 shadow-xl gap-6">
+                 <div className="flex items-center gap-6">
+                  <button onClick={() => setSelectedDate(subDays(selectedDate, 1))} className="p-4 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronLeft className="w-6 h-6" /></button>
+                  <div className="text-center sm:text-left">
+                    <h2 className="text-3xl font-black text-white tracking-tighter">{format(selectedDate, 'EEEE')}</h2>
+                    <p className="text-[10px] text-slate-500 uppercase font-black mt-1 tracking-[0.2em]">{format(selectedDate, 'MMMM do, yyyy')}</p>
+                  </div>
+                  <button onClick={() => setSelectedDate(addDays(selectedDate, 1))} className="p-4 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronRight className="w-6 h-6" /></button>
                  </div>
-                 <button onClick={() => setSelectedDate(addDays(selectedDate, 1))} className="p-5 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronRight className="w-8 h-8" /></button>
+                 {timetable.filter(l => l.day === format(selectedDate, 'EEEE')).length > 0 && (
+                  <button 
+                    onClick={markAllPresent} 
+                    className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                  >
+                    <CheckCircle className="w-4 h-4" /> All Present
+                  </button>
+                 )}
                </header>
                <div className="grid gap-6">
                  {timetable.filter(l => l.day === format(selectedDate, 'EEEE')).length > 0 ? (
@@ -510,40 +509,6 @@ const App: React.FC = () => {
                    </button>
                  </div>
                </header>
-
-               {/* File Format Guide */}
-               <section className="bg-indigo-600/5 border border-indigo-500/10 p-8 rounded-[40px] space-y-6">
-                 <div className="flex items-center gap-3">
-                   <Info className="w-5 h-5 text-indigo-400" />
-                   <h3 className="text-xs font-black uppercase tracking-widest text-indigo-400">Robust Sync Guide</h3>
-                 </div>
-                 <p className="text-xs text-slate-400 leading-relaxed max-w-2xl font-bold">
-                   The AI now recognizes messy spreadsheet grids and natural dates like <span className="text-white">Dec 8 2025</span>. Ensure your file has these 3 clear columns:
-                 </p>
-                 <div className="overflow-x-auto no-scrollbar rounded-2xl border border-white/5 bg-black/40">
-                    <table className="w-full text-left text-[10px] font-bold">
-                      <thead className="bg-white/5 text-slate-500 uppercase tracking-widest">
-                        <tr>
-                          <th className="px-6 py-3">Date</th>
-                          <th className="px-6 py-3">Subject</th>
-                          <th className="px-6 py-3">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-slate-300">
-                        <tr className="border-t border-white/5">
-                          <td className="px-6 py-3">Dec 8 2025</td>
-                          <td className="px-6 py-3">Principles of Marketing</td>
-                          <td className="px-6 py-3 text-emerald-400">P</td>
-                        </tr>
-                        <tr className="border-t border-white/5">
-                          <td className="px-6 py-3">Dec 10 2025</td>
-                          <td className="px-6 py-3">Microeconomics</td>
-                          <td className="px-6 py-3 text-rose-400">A</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                 </div>
-               </section>
 
                <div className="space-y-8">
                  {records.length === 0 ? (
@@ -621,15 +586,13 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Mobile Nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-6 pb-12 z-[100]">
         <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('dashboard')} />
+        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
         <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
         <MobileNavItem icon={<History />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
       </nav>
 
-      {/* AI Parsing Overlay */}
       {isParsingExcel && (
         <div className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-12 animate-in fade-in duration-500">
            <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white mb-10 shadow-[0_0_80px_rgba(79,70,229,0.4)] animate-pulse">
@@ -647,7 +610,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Status Modal */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowStatusModal(null)} />
