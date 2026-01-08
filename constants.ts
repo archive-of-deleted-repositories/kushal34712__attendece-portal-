@@ -27,6 +27,7 @@ export const SUBJECTS: Subject[] = [
   { name: 'Active Living', faculty: 'Mr. Kushagra Wadhwa', credits: 2 },
 ].map(sub => ({
   ...sub,
+  // 4 credit = 60, 3 credit = 45, 2 credit = 30
   targetLectures: sub.credits === 4 ? 60 : sub.credits === 3 ? 45 : sub.credits === 2 ? 30 : 0
 })) as (Subject & { targetLectures: number })[];
 

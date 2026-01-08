@@ -31,7 +31,8 @@ const App: React.FC = () => {
 
   // UI State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'subjects' | 'history' | 'admin' | 'sync'>('dashboard');
-  const [selectedDate, setSelectedDate] = useState<Date>(startOfToday());
+  // Set starting day as 8 Dec 2025 as per user request
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2025-12-08'));
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const [parseProgress, setParseProgress] = useState(0);
   const [copySuccess, setCopySuccess] = useState(false);
