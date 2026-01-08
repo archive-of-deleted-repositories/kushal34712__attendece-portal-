@@ -9,7 +9,7 @@ import {
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
   RefreshCcw, X, Plus, LogOut, ShieldCheck, Database, Trash2, Settings, 
   UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, 
-  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet, Info
+  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet, Info, AlertTriangle
 } from 'lucide-react';
 import { format, addDays, subDays, startOfToday, parseISO, isValid } from 'date-fns';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -31,7 +31,7 @@ const App: React.FC = () => {
 
   // UI State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'subjects' | 'history' | 'admin' | 'sync'>('dashboard');
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2025-12-08'));
+  const [selectedDate, setSelectedDate] = useState<Date>(startOfToday());
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const [parseProgress, setParseProgress] = useState(0);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -55,6 +55,7 @@ const App: React.FC = () => {
     }
   };
 
+  // Load User Records
   useEffect(() => {
     if (currentUser) {
       const saved = localStorage.getItem(`nmims_v3_db_${currentUser.sapId}`);
@@ -72,6 +73,7 @@ const App: React.FC = () => {
     }
   }, [currentUser]);
 
+  // Persist Records
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem(`nmims_v3_db_${currentUser.sapId}`, JSON.stringify(records));
@@ -99,14 +101,69 @@ const App: React.FC = () => {
     return { summary, overall, totalP, totalT };
   }, [records, subjectsList]);
 
+  // Robust Sync Key Generation (UTF-8 Safe)
   const generateSyncKey = () => {
     if (!currentUser) return '';
     try {
       const payload = { user: currentUser, records };
-      return btoa(JSON.stringify(payload));
+      const json = JSON.stringify(payload);
+      // Use standard UTF-8 safe base64 encoding
+      return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (match, p1) => 
+        String.fromCharCode(parseInt(p1, 16))
+      ));
     } catch (e) {
       console.error('Failed to generate sync key', e);
       return '';
+    }
+  };
+
+  const handleImportSyncKey = () => {
+    const input = syncKeyInput.trim();
+    if (!input) {
+      alert('Please enter a sync key.');
+      return;
+    }
+    try {
+      // Use standard UTF-8 safe base64 decoding
+      const decodedJson = decodeURIComponent(atob(input).split('').map(c => 
+        '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+      ).join(''));
+      
+      const decoded = JSON.parse(decodedJson);
+      
+      if (decoded.user && decoded.records) {
+        // Update user first to switch DB context
+        setCurrentUser(decoded.user);
+        setRecords(decoded.records);
+        
+        // Immediate persistence
+        localStorage.setItem('nmims_session_user', JSON.stringify(decoded.user));
+        localStorage.setItem(`nmims_v3_db_${decoded.user.sapId}`, JSON.stringify(decoded.records));
+        
+        alert('Data Synced Successfully! Matrix restored.');
+        setActiveTab('dashboard');
+        setSyncKeyInput('');
+      } else {
+        throw new Error('Malformed payload');
+      }
+    } catch (e) {
+      console.error('Import failed', e);
+      alert('Invalid Sync Key. Please ensure you copied the entire key node.');
+    }
+  };
+
+  const handleLogout = () => {
+    if (confirm('Are you sure you want to logout? Session data remains on this device.')) {
+      localStorage.removeItem('nmims_session_user');
+      window.location.reload();
+    }
+  };
+
+  const handleClearData = () => {
+    if (currentUser && confirm('CRITICAL: This will permanently erase ALL attendance records for this SAP ID. Proceed?')) {
+      setRecords([]);
+      localStorage.removeItem(`nmims_v3_db_${currentUser.sapId}`);
+      alert('Data Purged.');
     }
   };
 
@@ -255,23 +312,6 @@ const App: React.FC = () => {
     });
   };
 
-  const handleImportSyncKey = () => {
-    try {
-      const decoded = JSON.parse(atob(syncKeyInput));
-      if (decoded.user && decoded.records) {
-        setRecords(decoded.records);
-        setCurrentUser(decoded.user);
-        localStorage.setItem('nmims_session_user', JSON.stringify(decoded.user));
-        localStorage.setItem(`nmims_v3_db_${decoded.user.sapId}`, JSON.stringify(decoded.records));
-        alert('Sync Successful!');
-        setActiveTab('dashboard');
-        setSyncKeyInput('');
-      }
-    } catch (e) {
-      alert('Invalid Sync Key.');
-    }
-  };
-
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
@@ -309,6 +349,11 @@ const App: React.FC = () => {
   const dateStrForFiltering = format(selectedDate, 'yyyy-MM-dd');
   const extraLecturesForToday = records.filter(r => r.date === dateStrForFiltering && r.lectureId.startsWith('extra-'));
 
+  const handleScheduleClick = () => {
+    setActiveTab('schedule');
+    setSelectedDate(startOfToday());
+  };
+
   return (
     <div className="min-h-screen bg-[#050505] text-slate-100 flex flex-col md:flex-row font-sans">
       <aside className="hidden md:flex flex-col w-72 lg:w-80 bg-[#080808] border-r border-white/5 p-10 sticky top-0 h-screen z-50">
@@ -321,12 +366,12 @@ const App: React.FC = () => {
         </div>
         <nav className="space-y-2 flex-grow">
           <SidebarLink icon={<Layout />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarLink icon={<Calendar />} label="Schedule" active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
+          <SidebarLink icon={<Calendar />} label="Schedule" active={activeTab === 'schedule'} onClick={handleScheduleClick} />
           <SidebarLink icon={<BarChart2 />} label="Analytics" active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
           <SidebarLink icon={<History />} label="Logs" active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
           <SidebarLink icon={<RefreshCcw />} label="Sync Hub" active={activeTab === 'sync'} onClick={() => setActiveTab('sync')} />
         </nav>
-        <button onClick={() => { localStorage.removeItem('nmims_session_user'); window.location.reload(); }} className="mt-auto flex items-center gap-4 px-6 py-4 text-rose-500 font-black text-xs uppercase hover:bg-rose-500/10 rounded-xl transition-all">
+        <button onClick={handleLogout} className="mt-auto flex items-center gap-4 px-6 py-4 text-rose-500 font-black text-xs uppercase hover:bg-rose-500/10 rounded-xl transition-all">
           <LogOut className="w-5 h-5" /> Logout
         </button>
       </aside>
@@ -501,6 +546,57 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {activeTab === 'sync' && (
+            <div className="space-y-12 animate-in fade-in duration-500">
+              <header className="p-10 bg-slate-900/30 rounded-[48px] border border-white/5">
+                <h1 className="text-5xl font-black tracking-tighter">Sync Hub</h1>
+                <p className="text-slate-500 text-sm font-bold uppercase tracking-widest mt-4">Identity Persistence</p>
+              </header>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="bg-indigo-600/5 border border-indigo-500/20 p-12 rounded-[56px] space-y-8 shadow-2xl">
+                  <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><Share2 className="w-8 h-8" /></div>
+                  <div><h3 className="text-3xl font-black mb-2">Export Data</h3><p className="text-slate-400 text-sm">Transfer your current records to another device.</p></div>
+                  <div className="relative group">
+                    <div className="bg-black/60 p-8 rounded-3xl text-[9px] font-mono text-indigo-300 break-all h-40 overflow-y-auto custom-scrollbar border border-white/5 shadow-inner">
+                      {generateSyncKey()}
+                    </div>
+                    <button onClick={() => { navigator.clipboard.writeText(generateSyncKey()); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }} className="absolute top-4 right-4 p-4 bg-indigo-600 text-white rounded-2xl shadow-2xl transition-all active:scale-95">
+                      {copySuccess ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest text-center">Copy this key node and paste it in the import field on another device.</p>
+                </div>
+
+                <div className="bg-slate-900/40 border border-white/5 p-12 rounded-[56px] space-y-8 shadow-2xl">
+                  <div className="w-16 h-16 bg-emerald-600/20 rounded-2xl flex items-center justify-center text-emerald-400"><Download className="w-8 h-8" /></div>
+                  <div><h3 className="text-3xl font-black mb-2">Import Data</h3><p className="text-slate-400 text-sm">Restore or sync your matrix using an exported key node.</p></div>
+                  <textarea 
+                    value={syncKeyInput} 
+                    onChange={(e) => setSyncKeyInput(e.target.value)} 
+                    placeholder="Paste Key Node here..." 
+                    className="w-full h-40 bg-black/40 border border-white/10 rounded-3xl p-8 text-[10px] font-mono text-indigo-300 outline-none focus:border-indigo-500 no-scrollbar transition-all" 
+                  />
+                  <button onClick={handleImportSyncKey} className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] shadow-xl transition-all active:scale-95">Link Identity</button>
+                </div>
+              </div>
+
+              <div className="bg-rose-600/5 border border-rose-500/10 p-12 rounded-[56px] flex flex-col lg:flex-row items-center justify-between gap-10">
+                <div className="flex items-center gap-8">
+                  <div className="w-16 h-16 bg-rose-500/20 rounded-2xl flex items-center justify-center text-rose-500"><AlertTriangle className="w-8 h-8" /></div>
+                  <div>
+                    <h4 className="text-2xl font-black text-white tracking-tight">Danger Zone</h4>
+                    <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Erase local records node or reset session</p>
+                  </div>
+                </div>
+                <div className="flex gap-4 w-full lg:w-auto">
+                   <button onClick={handleClearData} className="flex-1 lg:flex-none px-10 py-5 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500/20 transition-all">Clear Records</button>
+                   <button onClick={handleLogout} className="flex-1 lg:flex-none px-10 py-5 bg-black/40 text-slate-300 border border-white/10 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/5 transition-all">Reset Session</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'history' && (
             <div className="space-y-10 animate-in fade-in duration-500">
                <header className="flex flex-col lg:flex-row justify-between items-center bg-slate-900/30 p-12 rounded-[56px] border border-white/5 gap-8">
@@ -625,7 +721,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Normal Status Modal (Reused for Extra too) */}
+      {/* Status Modal */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowStatusModal(null)} />
@@ -705,7 +801,7 @@ const App: React.FC = () => {
 
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-6 pb-12 z-[100]">
         <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
+        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={handleScheduleClick} />
         <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
         <MobileNavItem icon={<History />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
       </nav>
