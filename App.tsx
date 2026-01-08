@@ -47,7 +47,8 @@ const App: React.FC = () => {
   // Safe Date Formatting Utility
   const safeFormat = (dateStr: string, formatStr: string) => {
     try {
-      const d = parseISO(dateStr);
+      // Handle both ISO strings and potential Date objects
+      const d = new Date(dateStr);
       if (!isValid(d)) return "Invalid Date";
       return format(d, formatStr);
     } catch (e) {
@@ -127,10 +128,10 @@ const App: React.FC = () => {
         reader.onload = (e) => {
           try {
             const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
+            // Enable cellDates to handle native Excel date types
+            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
-            // header: 1 returns array of arrays (perfect for messy sheets)
             resolve(XLSX.utils.sheet_to_json(worksheet, { header: 1 }));
           } catch (err) {
             reject(err);
@@ -144,29 +145,30 @@ const App: React.FC = () => {
       if (!excelData || excelData.length === 0) throw new Error("Empty spreadsheet");
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Map to string for AI context
+      // Map to string for AI context, sanitizing values
       const gridText = excelData
         .filter(row => row.some((cell: any) => cell !== null && cell !== ''))
-        .slice(0, 200) // Keep first 200 rows to stay within context
-        .map(row => row.join('|'))
+        .slice(0, 300) // Increased limit for larger reports
+        .map(row => row.map(cell => {
+          if (cell instanceof Date) return format(cell, 'MMM d yyyy');
+          return String(cell);
+        }).join('|'))
         .join('\n');
       
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze this spreadsheet grid text.
+        contents: `Analyze this attendance grid. 
         Official Subjects: ${subjectsList.map(s => s.name).join(', ')}.
         
-        Data:
+        Data extracted from file:
         ${gridText}
         
-        Goal: 
-        Extract a list of attendance records. 
-        1. Identify the Date, Subject Name, and Status columns.
-        2. Recognize dates in formats like "Dec 8 2025" or "12/08/2025".
-        3. Map whatever subject names found in the sheet to the closest match in our Official Subjects list.
-        4. Convert statuses: 'P' or 'Present' or 'Attended' or '1' -> 'present', 'A' or 'Absent' or 'Missed' or '0' -> 'absent'.
-        5. Dates must be output as YYYY-MM-DD.
-        6. Return ONLY a valid JSON array of objects with keys: "subject", "status", "date".`,
+        Instruction:
+        1. Locate columns for Date, Subject, and Status (P/A).
+        2. Recognize dates like "Dec 8 2025", "Dec 08 2025", or "12/08/2025".
+        3. Map messy subject names (e.g., "Adv. Excel" or "Principles of Marketing") to their EXACT counterpart in the Official Subjects list provided above.
+        4. Normalize Status: 'P', 'Present', '1' -> 'present' | 'A', 'Absent', '0' -> 'absent'.
+        5. Return ONLY a JSON array: [{"subject": "Exact Name", "status": "present/absent", "date": "YYYY-MM-DD"}].`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -188,18 +190,20 @@ const App: React.FC = () => {
 
       const extracted = JSON.parse(response.text || '[]');
       const newBatch: AttendanceRecord[] = extracted
-        .filter((item: any) => item.date && isValid(parseISO(item.date)))
-        .map((item: any) => ({
-          id: `excel-${Date.now()}-${Math.random()}`,
-          date: item.date,
-          lectureId: 'imported-excel',
-          originalSubjectName: item.subject,
-          actualSubjectName: item.subject,
-          status: item.status.toLowerCase().startsWith('p') || item.status.toLowerCase() === '1' ? 'present' : 
-                  item.status.toLowerCase().startsWith('a') || item.status.toLowerCase() === '0' ? 'absent' : 'cancelled'
-        }));
+        .map((item: any) => {
+          const d = new Date(item.date);
+          return {
+            id: `excel-${Date.now()}-${Math.random()}`,
+            date: isValid(d) ? format(d, 'yyyy-MM-dd') : null,
+            lectureId: 'imported-excel',
+            originalSubjectName: item.subject,
+            actualSubjectName: item.subject,
+            status: item.status.toLowerCase().includes('p') || item.status === '1' ? 'present' : 'absent'
+          };
+        })
+        .filter(r => r.date !== null);
 
-      if (newBatch.length === 0) throw new Error("No records extracted");
+      if (newBatch.length === 0) throw new Error("No records found");
 
       setRecords(prev => {
         const updated = [...prev];
@@ -213,7 +217,8 @@ const App: React.FC = () => {
       setTimeout(() => setIsParsingExcel(false), 500);
     } catch (err) {
       setIsParsingExcel(false);
-      alert('Excel parse failed. Please check the "Format Guide" in the Logs tab. Supported date: Dec 8 2025.');
+      console.error(err);
+      alert('Excel Sync Failed. Please ensure your columns have headers like "Date", "Subject", and "Status".');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -510,17 +515,17 @@ const App: React.FC = () => {
                <section className="bg-indigo-600/5 border border-indigo-500/10 p-8 rounded-[40px] space-y-6">
                  <div className="flex items-center gap-3">
                    <Info className="w-5 h-5 text-indigo-400" />
-                   <h3 className="text-xs font-black uppercase tracking-widest text-indigo-400">Supported Excel Format</h3>
+                   <h3 className="text-xs font-black uppercase tracking-widest text-indigo-400">Robust Sync Guide</h3>
                  </div>
                  <p className="text-xs text-slate-400 leading-relaxed max-w-2xl font-bold">
-                   For successful AI parsing, ensure your Excel file has a clear table structure. The AI now explicitly recognizes natural date formats like <span className="text-white">Dec 8 2025</span>. 
+                   The AI now recognizes messy spreadsheet grids and natural dates like <span className="text-white">Dec 8 2025</span>. Ensure your file has these 3 clear columns:
                  </p>
                  <div className="overflow-x-auto no-scrollbar rounded-2xl border border-white/5 bg-black/40">
                     <table className="w-full text-left text-[10px] font-bold">
                       <thead className="bg-white/5 text-slate-500 uppercase tracking-widest">
                         <tr>
-                          <th className="px-6 py-3">Date Column</th>
-                          <th className="px-6 py-3">Subject Name</th>
+                          <th className="px-6 py-3">Date</th>
+                          <th className="px-6 py-3">Subject</th>
                           <th className="px-6 py-3">Status</th>
                         </tr>
                       </thead>
@@ -528,12 +533,12 @@ const App: React.FC = () => {
                         <tr className="border-t border-white/5">
                           <td className="px-6 py-3">Dec 8 2025</td>
                           <td className="px-6 py-3">Principles of Marketing</td>
-                          <td className="px-6 py-3 text-emerald-400">Present</td>
+                          <td className="px-6 py-3 text-emerald-400">P</td>
                         </tr>
                         <tr className="border-t border-white/5">
                           <td className="px-6 py-3">Dec 10 2025</td>
                           <td className="px-6 py-3">Microeconomics</td>
-                          <td className="px-6 py-3 text-rose-400">Absent</td>
+                          <td className="px-6 py-3 text-rose-400">A</td>
                         </tr>
                       </tbody>
                     </table>
@@ -619,7 +624,7 @@ const App: React.FC = () => {
       {/* Mobile Nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-6 pb-12 z-[100]">
         <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
+        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('dashboard')} />
         <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
         <MobileNavItem icon={<History />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
       </nav>
@@ -630,7 +635,7 @@ const App: React.FC = () => {
            <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white mb-10 shadow-[0_0_80px_rgba(79,70,229,0.4)] animate-pulse">
               <Cpu className="w-12 h-12" />
            </div>
-           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Excel Sync</h2>
+           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Matrix Sync</h2>
            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Mapping matrix and recognized dates like "Dec 8 2025"...</p>
            <div className="w-full max-w-sm h-4 bg-white/5 rounded-full border border-white/10 p-1 relative overflow-hidden">
               <div 
