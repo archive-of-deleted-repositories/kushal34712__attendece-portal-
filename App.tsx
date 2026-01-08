@@ -31,7 +31,6 @@ const App: React.FC = () => {
 
   // UI State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'subjects' | 'history' | 'admin' | 'sync'>('dashboard');
-  // Set starting day as 8 Dec 2025 as per user request
   const [selectedDate, setSelectedDate] = useState<Date>(new Date('2025-12-08'));
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const [parseProgress, setParseProgress] = useState(0);
@@ -39,13 +38,13 @@ const App: React.FC = () => {
   
   // Modals & Inputs
   const [showStatusModal, setShowStatusModal] = useState<{lectureId: string, subject: string, substitutingSubject?: string | null} | null>(null);
+  const [showExtraLectureModal, setShowExtraLectureModal] = useState(false);
   const [syncKeyInput, setSyncKeyInput] = useState('');
   
   // Core Data
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Safe Date Formatting Utility
   const safeFormat = (dateStr: string, formatStr: string) => {
     try {
       const d = new Date(dateStr);
@@ -56,7 +55,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Load User Records
   useEffect(() => {
     if (currentUser) {
       const saved = localStorage.getItem(`nmims_v3_db_${currentUser.sapId}`);
@@ -74,7 +72,6 @@ const App: React.FC = () => {
     }
   }, [currentUser]);
 
-  // Persist Records
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem(`nmims_v3_db_${currentUser.sapId}`, JSON.stringify(records));
@@ -220,7 +217,7 @@ const App: React.FC = () => {
 
   const markAttendance = (lectureId: string, originalSubject: string, actualSubject: string, status: AttendanceStatus) => {
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
-    const id = `${dateStr}-${lectureId}`;
+    const id = lectureId.startsWith('extra-') ? `extra-${dateStr}-${lectureId.split('-')[2] || Date.now()}` : `${dateStr}-${lectureId}`;
     setRecords(prev => {
       const filtered = prev.filter(r => r.id !== id);
       return [...filtered, {
@@ -307,6 +304,10 @@ const App: React.FC = () => {
       </div>
     );
   }
+
+  const currentDayLectures = timetable.filter(l => l.day === format(selectedDate, 'EEEE'));
+  const dateStrForFiltering = format(selectedDate, 'yyyy-MM-dd');
+  const extraLecturesForToday = records.filter(r => r.date === dateStrForFiltering && r.lectureId.startsWith('extra-'));
 
   return (
     <div className="min-h-screen bg-[#050505] text-slate-100 flex flex-col md:flex-row font-sans">
@@ -411,34 +412,9 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'sync' && (
-            <div className="space-y-12 animate-in fade-in duration-500">
-              <header className="p-10 bg-slate-900/30 rounded-[48px] border border-white/5">
-                <h1 className="text-5xl font-black tracking-tighter">Sync Hub</h1>
-                <p className="text-slate-500 text-sm font-bold uppercase tracking-widest mt-4">Identity Persistence</p>
-              </header>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="bg-indigo-600/5 border border-indigo-500/20 p-12 rounded-[56px] space-y-8 shadow-2xl">
-                  <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white"><Share2 className="w-8 h-8" /></div>
-                  <div><h3 className="text-3xl font-black mb-2">Export Data</h3><p className="text-slate-400 text-sm">Transfer your attendance nodes to another device.</p></div>
-                  <div className="relative group">
-                    <div className="bg-black/60 p-8 rounded-3xl text-[9px] font-mono text-indigo-300 break-all h-40 overflow-y-auto custom-scrollbar border border-white/5 shadow-inner">{generateSyncKey()}</div>
-                    <button onClick={() => { navigator.clipboard.writeText(generateSyncKey()); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }} className="absolute top-4 right-4 p-4 bg-indigo-600 text-white rounded-2xl shadow-2xl transition-all active:scale-95">{copySuccess ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}</button>
-                  </div>
-                </div>
-                <div className="bg-slate-900/40 border border-white/5 p-12 rounded-[56px] space-y-8 shadow-2xl">
-                  <div className="w-16 h-16 bg-emerald-600/20 rounded-2xl flex items-center justify-center text-emerald-400"><Download className="w-8 h-8" /></div>
-                  <div><h3 className="text-3xl font-black mb-2">Import Data</h3><p className="text-slate-400 text-sm">Restore your attendance matrix using a key.</p></div>
-                  <textarea value={syncKeyInput} onChange={(e) => setSyncKeyInput(e.target.value)} placeholder="Paste Key Node..." className="w-full h-40 bg-black/40 border border-white/10 rounded-3xl p-8 text-[10px] font-mono text-indigo-300 outline-none focus:border-indigo-500 no-scrollbar transition-all" />
-                  <button onClick={handleImportSyncKey} className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[24px] font-black uppercase tracking-[0.2em] text-[10px] shadow-xl transition-all active:scale-95">Link Identity</button>
-                </div>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'schedule' && (
             <div className="space-y-10 animate-in fade-in duration-500">
-               <header className="flex flex-col sm:flex-row items-center justify-between bg-slate-900/40 p-10 rounded-[48px] border border-white/5 shadow-xl gap-6">
+               <header className="flex flex-col lg:flex-row items-center justify-between bg-slate-900/40 p-10 rounded-[48px] border border-white/5 shadow-xl gap-6">
                  <div className="flex items-center gap-6">
                   <button onClick={() => setSelectedDate(subDays(selectedDate, 1))} className="p-4 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronLeft className="w-6 h-6" /></button>
                   <div className="text-center sm:text-left">
@@ -447,44 +423,74 @@ const App: React.FC = () => {
                   </div>
                   <button onClick={() => setSelectedDate(addDays(selectedDate, 1))} className="p-4 bg-black/40 rounded-2xl hover:text-indigo-400 transition-all"><ChevronRight className="w-6 h-6" /></button>
                  </div>
-                 {timetable.filter(l => l.day === format(selectedDate, 'EEEE')).length > 0 && (
+                 <div className="flex gap-4">
                   <button 
-                    onClick={markAllPresent} 
-                    className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                    onClick={() => setShowExtraLectureModal(true)}
+                    className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 shadow-lg"
                   >
-                    <CheckCircle className="w-4 h-4" /> All Present
+                    <Plus className="w-4 h-4" /> Add Extra
                   </button>
-                 )}
+                  {currentDayLectures.length > 0 && (
+                    <button 
+                      onClick={markAllPresent} 
+                      className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                    >
+                      <CheckCircle className="w-4 h-4" /> All Present
+                    </button>
+                  )}
+                 </div>
                </header>
+
                <div className="grid gap-6">
-                 {timetable.filter(l => l.day === format(selectedDate, 'EEEE')).length > 0 ? (
-                   timetable.filter(l => l.day === format(selectedDate, 'EEEE')).map(lecture => {
-                     const record = records.find(r => r.id === `${format(selectedDate, 'yyyy-MM-dd')}-${lecture.id}`);
-                     const isSubstituted = record?.actualSubjectName !== lecture.subject && !!record?.actualSubjectName;
-                     
-                     return (
-                       <div key={lecture.id} className="bg-[#0d0d0d] p-8 rounded-[40px] border border-white/5 flex flex-col sm:flex-row items-center justify-between gap-8 group hover:border-indigo-500/20 transition-all">
-                         <div className="flex items-center gap-8 w-full sm:w-auto">
-                           <div className="w-20 h-20 bg-black/60 rounded-[28px] flex items-center justify-center border border-white/5 transition-all group-hover:border-indigo-500/30"><Clock className="w-8 h-8" /></div>
-                           <div className="min-w-0 flex-grow">
-                             <div className="flex items-center gap-3">
-                                <h4 className="text-2xl font-black text-white truncate group-hover:text-indigo-400 transition-colors">{isSubstituted ? record.actualSubjectName : lecture.subject}</h4>
-                                {isSubstituted && (
-                                   <span className="px-3 py-1 bg-indigo-500/20 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-lg border border-indigo-500/30 flex items-center gap-1"><Replace className="w-2.5 h-2.5" /> SUBSTITUTED</span>
-                                )}
+                 {currentDayLectures.length > 0 || extraLecturesForToday.length > 0 ? (
+                   <>
+                     {currentDayLectures.map(lecture => {
+                       const record = records.find(r => r.id === `${format(selectedDate, 'yyyy-MM-dd')}-${lecture.id}`);
+                       const isSubstituted = record?.actualSubjectName !== lecture.subject && !!record?.actualSubjectName;
+                       
+                       return (
+                         <div key={lecture.id} className="bg-[#0d0d0d] p-8 rounded-[40px] border border-white/5 flex flex-col sm:flex-row items-center justify-between gap-8 group hover:border-indigo-500/20 transition-all">
+                           <div className="flex items-center gap-8 w-full sm:w-auto">
+                             <div className="w-20 h-20 bg-black/60 rounded-[28px] flex items-center justify-center border border-white/5 transition-all group-hover:border-indigo-500/30"><Clock className="w-8 h-8" /></div>
+                             <div className="min-w-0 flex-grow">
+                               <div className="flex items-center gap-3">
+                                  <h4 className="text-2xl font-black text-white truncate group-hover:text-indigo-400 transition-colors">{isSubstituted ? record.actualSubjectName : lecture.subject}</h4>
+                                  {isSubstituted && (
+                                     <span className="px-3 py-1 bg-indigo-500/20 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-lg border border-indigo-500/30 flex items-center gap-1"><Replace className="w-2.5 h-2.5" /> SUBSTITUTED</span>
+                                  )}
+                               </div>
+                               <p className="text-[11px] font-black text-slate-600 uppercase mt-2 tracking-widest">{lecture.time} • {lecture.faculty}</p>
                              </div>
-                             <p className="text-[11px] font-black text-slate-600 uppercase mt-2 tracking-widest">{lecture.time} • {lecture.faculty}</p>
                            </div>
+                           <button 
+                             onClick={() => setShowStatusModal({lectureId: lecture.id, subject: lecture.subject, substitutingSubject: isSubstituted ? record.actualSubjectName : null})}
+                             className={`w-full sm:w-auto px-12 py-5 rounded-[28px] font-black text-[10px] uppercase border tracking-[0.15em] transition-all shadow-lg active:scale-95 ${record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-white/5 text-slate-600 border-white/5 hover:text-white'}`}
+                           >
+                             {record?.status ? (isSubstituted ? `${record.status} (Sub)` : record.status) : 'Record Node'}
+                           </button>
                          </div>
-                         <button 
-                           onClick={() => setShowStatusModal({lectureId: lecture.id, subject: lecture.subject, substitutingSubject: isSubstituted ? record.actualSubjectName : null})}
-                           className={`w-full sm:w-auto px-12 py-5 rounded-[28px] font-black text-[10px] uppercase border tracking-[0.15em] transition-all shadow-lg active:scale-95 ${record?.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : record?.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-white/5 text-slate-600 border-white/5 hover:text-white'}`}
-                         >
-                           {record?.status ? (isSubstituted ? `${record.status} (Sub)` : record.status) : 'Record Node'}
-                         </button>
-                       </div>
-                     );
-                   })
+                       );
+                     })}
+                     
+                     {extraLecturesForToday.map(extra => (
+                        <div key={extra.id} className="bg-[#0d0d0d] p-8 rounded-[40px] border border-indigo-500/20 flex flex-col sm:flex-row items-center justify-between gap-8 group transition-all relative overflow-hidden">
+                          <div className="absolute top-0 right-0 px-4 py-1 bg-indigo-600 text-[8px] font-black uppercase tracking-widest rounded-bl-xl">EXTRA LECTURE</div>
+                          <div className="flex items-center gap-8 w-full sm:w-auto">
+                             <div className="w-20 h-20 bg-indigo-600/10 rounded-[28px] flex items-center justify-center border border-indigo-500/20 text-indigo-400"><Plus className="w-8 h-8" /></div>
+                             <div className="min-w-0 flex-grow">
+                                <h4 className="text-2xl font-black text-white truncate">{extra.actualSubjectName}</h4>
+                                <p className="text-[11px] font-black text-indigo-400 uppercase mt-2 tracking-widest">Added Manually</p>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-4 w-full sm:w-auto">
+                            <span className={`px-12 py-5 rounded-[28px] font-black text-[10px] uppercase border tracking-[0.15em] transition-all shadow-lg ${extra.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                              {extra.status}
+                            </span>
+                            <button onClick={() => setRecords(prev => prev.filter(r => r.id !== extra.id))} className="p-5 bg-rose-500/10 text-rose-500 rounded-2xl active:scale-90 transition-all border border-rose-500/20"><Trash2 className="w-6 h-6" /></button>
+                          </div>
+                        </div>
+                     ))}
+                   </>
                  ) : (
                    <div className="py-32 text-center opacity-20 flex flex-col items-center gap-6">
                      <Umbrella className="w-16 h-16" />
@@ -533,6 +539,7 @@ const App: React.FC = () => {
                                <div className="flex items-center gap-3 mt-2">
                                  <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${r.status === 'present' ? 'bg-emerald-500/10 text-emerald-400' : r.status === 'absent' ? 'bg-rose-500/10 text-rose-400' : 'bg-white/10 text-slate-500'}`}>{r.status}</span>
                                  {r.actualSubjectName !== r.originalSubjectName && <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest border border-indigo-400/20 px-2 rounded-md">Substituted</span>}
+                                 {r.lectureId.startsWith('extra-') && <span className="text-[8px] font-black text-amber-400 uppercase tracking-widest border border-amber-400/20 px-2 rounded-md">Extra</span>}
                                </div>
                              </div>
                              <button onClick={() => setRecords(prev => prev.filter(x => x.id !== r.id))} className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl opacity-0 group-hover:opacity-100 transition-all active:scale-95"><Trash2 className="w-5 h-5" /></button>
@@ -587,30 +594,38 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-6 pb-12 z-[100]">
-        <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
-        <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
-        <MobileNavItem icon={<History />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
-      </nav>
-
-      {isParsingExcel && (
-        <div className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-12 animate-in fade-in duration-500">
-           <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white mb-10 shadow-[0_0_80px_rgba(79,70,229,0.4)] animate-pulse">
-              <Cpu className="w-12 h-12" />
-           </div>
-           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Matrix Sync</h2>
-           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Mapping matrix and recognized dates like "Dec 8 2025"...</p>
-           <div className="w-full max-w-sm h-4 bg-white/5 rounded-full border border-white/10 p-1 relative overflow-hidden">
-              <div 
-                className="h-full bg-indigo-600 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.5)]"
-                style={{ width: `${parseProgress}%` }}
-              />
-           </div>
-           <span className="mt-4 text-[11px] font-black text-indigo-400 font-mono tracking-widest">{parseProgress}%</span>
+      {/* Select Extra Lecture Modal */}
+      {showExtraLectureModal && (
+        <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0">
+          <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowExtraLectureModal(false)} />
+          <div className="relative bg-[#080808] w-full sm:max-w-xl rounded-t-[64px] sm:rounded-[64px] p-12 shadow-2xl border-t sm:border border-white/10 animate-in slide-in-from-bottom-full duration-500 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-10">
+              <h3 className="text-3xl font-black text-white tracking-tighter">Add Extra Node</h3>
+              <button onClick={() => setShowExtraLectureModal(false)} className="p-4 bg-white/5 rounded-2xl"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="space-y-4 overflow-y-auto custom-scrollbar pr-2">
+              {subjectsList.map(sub => (
+                <button 
+                  key={sub.name}
+                  onClick={() => {
+                    setShowStatusModal({ lectureId: `extra-${sub.name.replace(/\s+/g, '-')}-${Date.now()}`, subject: sub.name });
+                    setShowExtraLectureModal(false);
+                  }}
+                  className="w-full p-8 bg-white/5 rounded-[32px] text-left border border-white/5 hover:border-indigo-500/40 transition-all flex items-center justify-between group"
+                >
+                  <div>
+                    <p className="font-black text-lg text-white group-hover:text-indigo-400 transition-colors">{sub.name}</p>
+                    <p className="text-[9px] font-black uppercase text-slate-500 tracking-widest mt-1">{sub.faculty}</p>
+                  </div>
+                  <ChevronRight className="w-6 h-6 text-slate-600 group-hover:text-indigo-400" />
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
+      {/* Normal Status Modal (Reused for Extra too) */}
       {showStatusModal && (
         <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0">
           <div className="absolute inset-0 bg-black/98 backdrop-blur-3xl" onClick={() => setShowStatusModal(null)} />
@@ -619,7 +634,7 @@ const App: React.FC = () => {
               <div className="min-w-0 pr-10">
                 <h3 className="text-4xl font-black text-white tracking-tighter">Record Node</h3>
                 <p className="text-slate-500 uppercase text-[11px] mt-3 font-black tracking-widest truncate">
-                  {showStatusModal.substitutingSubject ? `Substitution: ${showStatusModal.substitutingSubject}` : `Scheduled: ${showStatusModal.subject}`}
+                  {showStatusModal.lectureId.startsWith('extra-') ? `Extra Node: ${showStatusModal.subject}` : (showStatusModal.substitutingSubject ? `Substitution: ${showStatusModal.substitutingSubject}` : `Scheduled: ${showStatusModal.subject}`)}
                 </p>
               </div>
               <button onClick={() => setShowStatusModal(null)} className="p-5 bg-white/5 rounded-2xl text-slate-600 hover:text-white transition-all active:scale-95"><X className="w-8 h-8" /></button>
@@ -636,14 +651,16 @@ const App: React.FC = () => {
                   </button>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4">
-                   <button onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, showStatusModal.subject, 'cancelled')} className="p-6 bg-white/5 rounded-[32px] flex items-center justify-center gap-4 font-black uppercase text-[9px] text-slate-500 active:scale-95 hover:bg-white/10 transition-all border border-white/5">
-                    <Ban className="w-5 h-5" /> Cancelled
-                   </button>
-                   <button onClick={() => setShowStatusModal({...showStatusModal, substitutingSubject: 'PENDING'})} className="p-6 bg-indigo-500/5 rounded-[32px] flex items-center justify-center gap-4 font-black uppercase text-[9px] text-indigo-400 active:scale-95 hover:bg-indigo-500/10 transition-all border border-indigo-500/10">
-                    <Replace className="w-5 h-5" /> Substitute
-                   </button>
-                </div>
+                {!showStatusModal.lectureId.startsWith('extra-') && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <button onClick={() => markAttendance(showStatusModal.lectureId, showStatusModal.subject, showStatusModal.subject, 'cancelled')} className="p-6 bg-white/5 rounded-[32px] flex items-center justify-center gap-4 font-black uppercase text-[9px] text-slate-500 active:scale-95 hover:bg-white/10 transition-all border border-white/5">
+                      <Ban className="w-5 h-5" /> Cancelled
+                    </button>
+                    <button onClick={() => setShowStatusModal({...showStatusModal, substitutingSubject: 'PENDING'})} className="p-6 bg-indigo-500/5 rounded-[32px] flex items-center justify-center gap-4 font-black uppercase text-[9px] text-indigo-400 active:scale-95 hover:bg-indigo-500/10 transition-all border border-indigo-500/10">
+                      <Replace className="w-5 h-5" /> Substitute
+                    </button>
+                  </div>
+                )}
               </div>
             ) : showStatusModal.substitutingSubject === 'PENDING' ? (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -683,6 +700,30 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#080808]/90 backdrop-blur-3xl border-t border-white/5 flex items-center justify-around p-6 pb-12 z-[100]">
+        <MobileNavItem icon={<Layout />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+        <MobileNavItem icon={<Calendar />} active={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
+        <MobileNavItem icon={<Calculator />} active={activeTab === 'subjects'} onClick={() => setActiveTab('subjects')} />
+        <MobileNavItem icon={<History />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
+      </nav>
+
+      {isParsingExcel && (
+        <div className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-12 animate-in fade-in duration-500">
+           <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center text-white mb-10 shadow-[0_0_80px_rgba(79,70,229,0.4)] animate-pulse">
+              <Cpu className="w-12 h-12" />
+           </div>
+           <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Matrix Sync</h2>
+           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Mapping matrix and recognized dates like "Dec 8 2025"...</p>
+           <div className="w-full max-w-sm h-4 bg-white/5 rounded-full border border-white/10 p-1 relative overflow-hidden">
+              <div 
+                className="h-full bg-indigo-600 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.5)]"
+                style={{ width: `${parseProgress}%` }}
+              />
+           </div>
+           <span className="mt-4 text-[11px] font-black text-indigo-400 font-mono tracking-widest">{parseProgress}%</span>
         </div>
       )}
     </div>
