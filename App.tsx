@@ -9,7 +9,7 @@ import {
   User as UserIcon, ChevronRight, AlertCircle, History, Layout, ChevronLeft,
   RefreshCcw, X, Plus, LogOut, ShieldCheck, Database, Trash2, Settings, 
   UserPlus, Calculator, Bell, BellRing, Send, Megaphone, Ban, Umbrella, 
-  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet
+  FileUp, Loader2, TrendingUp, Zap, Target, Share2, Download, Copy, Check, Sparkles, Cpu, Replace, FileSpreadsheet, Info
 } from 'lucide-react';
 import { format, addDays, subDays, startOfToday, parseISO, isValid } from 'date-fns';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -153,7 +153,7 @@ const App: React.FC = () => {
       
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze this spreadsheet grid text. It could be an official NMIMS report or any normal attendance table.
+        contents: `Analyze this spreadsheet grid text.
         Official Subjects: ${subjectsList.map(s => s.name).join(', ')}.
         
         Data:
@@ -162,10 +162,11 @@ const App: React.FC = () => {
         Goal: 
         Extract a list of attendance records. 
         1. Identify the Date, Subject Name, and Status columns.
-        2. Map whatever subject names found in the sheet to the closest match in our Official Subjects list.
-        3. Convert statuses: 'P' or 'Present' or similar -> 'present', 'A' or 'Absent' or similar -> 'absent'.
-        4. Dates must be YYYY-MM-DD.
-        5. Return ONLY a valid JSON array of objects with keys: "subject", "status", "date".`,
+        2. Recognize dates in formats like "Dec 8 2025" or "12/08/2025".
+        3. Map whatever subject names found in the sheet to the closest match in our Official Subjects list.
+        4. Convert statuses: 'P' or 'Present' or 'Attended' or '1' -> 'present', 'A' or 'Absent' or 'Missed' or '0' -> 'absent'.
+        5. Dates must be output as YYYY-MM-DD.
+        6. Return ONLY a valid JSON array of objects with keys: "subject", "status", "date".`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -194,8 +195,8 @@ const App: React.FC = () => {
           lectureId: 'imported-excel',
           originalSubjectName: item.subject,
           actualSubjectName: item.subject,
-          status: item.status.toLowerCase().startsWith('p') ? 'present' : 
-                  item.status.toLowerCase().startsWith('a') ? 'absent' : 'cancelled'
+          status: item.status.toLowerCase().startsWith('p') || item.status.toLowerCase() === '1' ? 'present' : 
+                  item.status.toLowerCase().startsWith('a') || item.status.toLowerCase() === '0' ? 'absent' : 'cancelled'
         }));
 
       if (newBatch.length === 0) throw new Error("No records extracted");
@@ -212,7 +213,7 @@ const App: React.FC = () => {
       setTimeout(() => setIsParsingExcel(false), 500);
     } catch (err) {
       setIsParsingExcel(false);
-      alert('Excel parse failed. Please ensure the file has clear headers for Date, Subject, and Status.');
+      alert('Excel parse failed. Please check the "Format Guide" in the Logs tab. Supported date: Dec 8 2025.');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -504,6 +505,41 @@ const App: React.FC = () => {
                    </button>
                  </div>
                </header>
+
+               {/* File Format Guide */}
+               <section className="bg-indigo-600/5 border border-indigo-500/10 p-8 rounded-[40px] space-y-6">
+                 <div className="flex items-center gap-3">
+                   <Info className="w-5 h-5 text-indigo-400" />
+                   <h3 className="text-xs font-black uppercase tracking-widest text-indigo-400">Supported Excel Format</h3>
+                 </div>
+                 <p className="text-xs text-slate-400 leading-relaxed max-w-2xl font-bold">
+                   For successful AI parsing, ensure your Excel file has a clear table structure. The AI now explicitly recognizes natural date formats like <span className="text-white">Dec 8 2025</span>. 
+                 </p>
+                 <div className="overflow-x-auto no-scrollbar rounded-2xl border border-white/5 bg-black/40">
+                    <table className="w-full text-left text-[10px] font-bold">
+                      <thead className="bg-white/5 text-slate-500 uppercase tracking-widest">
+                        <tr>
+                          <th className="px-6 py-3">Date Column</th>
+                          <th className="px-6 py-3">Subject Name</th>
+                          <th className="px-6 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-slate-300">
+                        <tr className="border-t border-white/5">
+                          <td className="px-6 py-3">Dec 8 2025</td>
+                          <td className="px-6 py-3">Principles of Marketing</td>
+                          <td className="px-6 py-3 text-emerald-400">Present</td>
+                        </tr>
+                        <tr className="border-t border-white/5">
+                          <td className="px-6 py-3">Dec 10 2025</td>
+                          <td className="px-6 py-3">Microeconomics</td>
+                          <td className="px-6 py-3 text-rose-400">Absent</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                 </div>
+               </section>
+
                <div className="space-y-8">
                  {records.length === 0 ? (
                    <div className="py-40 text-center opacity-20 font-black uppercase tracking-[0.4em] text-xs">No Node History Found</div>
@@ -595,7 +631,7 @@ const App: React.FC = () => {
               <Cpu className="w-12 h-12" />
            </div>
            <h2 className="text-3xl font-black text-white tracking-tighter mb-4 text-center">AI Excel Sync</h2>
-           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Processing grid nodes and mapping matrix...</p>
+           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-12 text-center max-w-xs leading-relaxed">Mapping matrix and recognized dates like "Dec 8 2025"...</p>
            <div className="w-full max-w-sm h-4 bg-white/5 rounded-full border border-white/10 p-1 relative overflow-hidden">
               <div 
                 className="h-full bg-indigo-600 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.5)]"
