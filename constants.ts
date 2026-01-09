@@ -6,7 +6,7 @@ export const DEFAULT_PASSWORD = 'NMIMS_STUDENT';
 // Authorized SAP IDs (specified by admin)
 export const AUTHORIZED_STUDENTS = [
   { sapId: '17001250020', name: 'Kushal Agrawal' },
-  { sapId: '70012345679', name: 'Student B' },
+  { sapId: '17001250008', name: 'Swami Patil' },
   { sapId: '70012345680', name: 'Student C' },
   { sapId: '70012345681', name: 'Student D' },
   { sapId: '12345678901', name: 'Demo Student' },
